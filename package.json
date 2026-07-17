@@ -1,35 +1,28 @@
 {
-  "name": "drift-watch",
-  "version": "0.1.0",
+  "name": "agentpulse-workspace",
+  "version": "0.2.0",
   "private": true,
+  "description": "Workspace root for AgentPulse: a self-observing AI agent SDK (packages/sdk) and its reference Fastify server (packages/server).",
   "type": "module",
+  "engines": {
+    "node": ">=20.11",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@9.15.0",
   "scripts": {
-    "start": "node --import ./dist/telemetry/otel.js ./dist/server.js",
-    "dev": "tsx --import ./src/telemetry/otel.ts ./src/server.ts",
-    "build": "tsc",
-    "drift": "tsx ./src/drift/detector.ts"
-  },
-  "dependencies": {
-    "ai": "^7.0.0",
-    "zod": "^3.25.0",
-    "@opentelemetry/api": "^1.9.0",
-    "@opentelemetry/auto-instrumentations-node": "^0.52.0",
-    "@opentelemetry/exporter-trace-otlp-proto": "^0.55.0",
-    "@opentelemetry/exporter-metrics-otlp-proto": "^0.55.0",
-    "@opentelemetry/resources": "1.28.0",
-    "@opentelemetry/sdk-node": "0.55.0",
-    "@opentelemetry/sdk-metrics": "1.28.0",
-    "@opentelemetry/semantic-conventions": "^1.28.0",
-    "fastify": "^5.1.0"
-  },
-  "optionalDependencies": {
-    "@ai-sdk/openai": "^4.0.0",
-    "@ai-sdk/anthropic": "^4.0.0",
-    "@ai-sdk/google": "^4.0.0"
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "dev": "pnpm --filter @agentpulse/server dev",
+    "start": "pnpm --filter @agentpulse/server start",
+    "seed": "pnpm --filter @agentpulse/server seed",
+    "drift": "pnpm --filter @agentpulse/server drift",
+    "drift:dry-run": "pnpm --filter @agentpulse/server drift:dry-run"
   },
   "devDependencies": {
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
     "@types/node": "^22.0.0"
   }
 }

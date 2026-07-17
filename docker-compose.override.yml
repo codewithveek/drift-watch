@@ -1,5 +1,5 @@
 # Drop this into the SigNoz self-host repo's deploy/docker directory (or merge
-# into your own compose) so your agent runs on the same network as the SigNoz
+# into your own compose) so AgentPulse runs on the same network as the SigNoz
 # OTel collector. Then the OTLP endpoint is the collector's service name, not
 # localhost.
 #
@@ -7,15 +7,22 @@
 #   cd signoz/deploy/docker
 #   docker compose up -d           # brings up SigNoz (UI on :8080)
 #   docker compose -f docker-compose.yaml -f docker-compose.override.yml up -d
+#
+# Which provider key you need below depends on how you configured
+# src/config/model-client.ts — the rest are harmless if unset.
 services:
-  agent-drift-watch:
-    build: ../../agent-drift-watch   # adjust to where you cloned this
+  agentpulse:
+    build: ../../agentpulse   # adjust to where you cloned this
     environment:
-      # collector service name inside the SigNoz compose network:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       SIGNOZ_URL: http://query-service:8080
       SIGNOZ_API_KEY: ${SIGNOZ_API_KEY}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      MODEL: ${MODEL:-anthropic/claude-3-5-sonnet}
+      AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_GENERATIVE_AI_API_KEY: ${GOOGLE_GENERATIVE_AI_API_KEY:-}
+      AUTH_TOKEN: ${AUTH_TOKEN:-}
       PORT: 3000
     ports:
       - "3000:3000"

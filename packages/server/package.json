@@ -1,0 +1,32 @@
+{
+  "name": "@agentpulse/server",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Reference Fastify server for AgentPulse. Demo skills (tools), the bring-your-own model-client wiring point, and the HTTP surface. Imports @agentpulse/sdk for everything reusable.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "start": "node --import ./dist/telemetry-bootstrap.js ./dist/server.js",
+    "dev": "tsx --import ./src/telemetry-bootstrap.ts ./src/server.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "drift": "tsx ./src/cli/drift.ts",
+    "drift:dry-run": "DRIFT_DRY_RUN=1 tsx ./src/cli/drift.ts",
+    "seed": "tsx ./scripts/seed-traffic.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@agentpulse/sdk": "workspace:*",
+    "ai": "^7.0.19",
+    "zod": "^3.25.76",
+    "fastify": "^5.1.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "@types/node": "^22.0.0"
+  }
+}
