@@ -22,11 +22,11 @@
     "dist"
   ],
   "dependencies": {
-    "@ai-sdk/openai": "^4.0.0",
+    "@ai-sdk/openai": "^4.0.16",
     "@driftwatch/sdk": "workspace:*",
     "@fastify/rate-limit": "^11.1.0",
     "@fastify/static": "^8.0.0",
-    "ai": "^7.0.19",
+    "ai": "^7.0.31",
     "fastify": "^5.1.0",
     "ioredis": "^5.4.1",
     "zod": "^3.25.76"
