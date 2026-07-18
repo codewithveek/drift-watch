@@ -24,7 +24,7 @@ cd driftwatch
 pnpm install
 ```
 
-Requires Node ≥20.11 and pnpm ≥9.
+Requires Node ≥22 and pnpm ≥9.
 
 ## 3. Configure a model client and run the server
 

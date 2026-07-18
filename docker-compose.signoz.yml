@@ -1,0 +1,68 @@
+# Drop this into the SigNoz self-host repo's deploy/docker directory (or merge
+# into your own compose) so DriftWatch runs on the same network as the SigNoz
+# OTel collector. Then the OTLP endpoint is the collector's service name, not
+# localhost.
+#
+# NOT named docker-compose.override.yml on purpose: that filename is
+# auto-merged by `docker compose up` whenever a docker-compose.yml sits next
+# to it, and this file's `depends_on: [otel-collector]` only resolves once
+# it's merged into SigNoz's own compose file — deployed alone (e.g. a
+# platform like Coolify that auto-picks up whatever compose file it finds in
+# the repo root) it fails with "service depends on undefined service
+# otel-collector". For a standalone deployment with no SigNoz dependency,
+# use ../docker-compose.yml instead.
+#
+#   git clone https://github.com/SigNoz/signoz
+#   cd signoz/deploy/docker
+#   docker compose up -d           # brings up SigNoz (UI on :8080)
+#   docker compose -f docker-compose.yaml -f /path/to/drift-watch/docker-compose.signoz.yml up -d
+#
+# Build context is the driftwatch workspace root (not this file's directory) —
+# the server's Dockerfile uses `pnpm deploy` to pull in @driftwatch/sdk.
+# This deployment targets Qwen Cloud's OpenAI-compatible endpoint (see
+# packages/server/src/config/model-client.ts); supply QWEN_API_KEY.
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - driftwatch-redis:/data
+    restart: unless-stopped
+
+  driftwatch:
+    build:
+      context: ../../drift-watch   # adjust to where you cloned this
+      dockerfile: packages/server/Dockerfile
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      SIGNOZ_URL: http://query-service:8080
+      SIGNOZ_API_KEY: ${SIGNOZ_API_KEY}
+      # --- model client (Qwen Cloud, OpenAI-compatible) ---
+      QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      MODEL: ${MODEL:-qwen-max}
+      AUTH_TOKEN: ${AUTH_TOKEN:-}
+      # --- shared state (multi-process): point autopilot at the Redis above ---
+      REDIS_URL: redis://redis:6379
+      # --- autopilot (drift-triggered remediation loop) ---
+      AUTOPILOT_ENABLED: ${AUTOPILOT_ENABLED:-0}
+      AUTOPILOT_MODE: ${AUTOPILOT_MODE:-shadow}
+      AUTOPILOT_SCAN_INTERVAL_MS: ${AUTOPILOT_SCAN_INTERVAL_MS:-60000}
+      AUTOPILOT_APPROVAL_TIMEOUT_MS: ${AUTOPILOT_APPROVAL_TIMEOUT_MS:-600000}
+      AUTOPILOT_POLICIES: ${AUTOPILOT_POLICIES:-}
+      # --- notification / approval channels ---
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_SECRET_TOKEN: ${TELEGRAM_SECRET_TOKEN:-}
+      DRIFT_WEBHOOK_URL: ${DRIFT_WEBHOOK_URL:-}
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - otel-collector
+      - redis
+
+volumes:
+  driftwatch-redis:

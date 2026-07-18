@@ -31,30 +31,57 @@ What the image already does for you (see
   ./dist/server.js`; instrumentation would miss everything imported before
   it.
 
-## docker-compose with SigNoz
+## docker-compose (standalone — Coolify, Railway, plain `docker compose up`)
 
-[`docker-compose.override.yml`](../docker-compose.override.yml) is meant to
-be merged into (or dropped alongside) SigNoz's own self-host compose file,
-so DriftWatch runs on the same Docker network as the SigNoz OTel collector:
+[`docker-compose.yml`](../docker-compose.yml) at the repo root brings up
+**DriftWatch + Redis** with no other services required — this is the file
+platforms that auto-deploy a repo's `docker-compose.yml` (Coolify, Railway,
+...) will pick up:
+
+```bash
+docker compose up -d --build
+```
+
+It wires `REDIS_URL=redis://redis:6379` into the DriftWatch container so
+autopilot state is shared and multi-process-safe out of the box. Autopilot
+itself ships **disabled** (`AUTOPILOT_ENABLED=0`); flip it on (and set
+channel secrets) via env vars when you're ready. OpenTelemetry export is
+optional — `OTEL_EXPORTER_OTLP_ENDPOINT` / `SIGNOZ_URL` default to
+`localhost`, which is unreachable inside the container and simply means the
+exporter logs failures instead of sending anywhere; the server still runs
+fine. Point those at a collector/query-service you already run elsewhere if
+you have one.
+
+On Coolify specifically: pick "Docker Compose" as the build pack, point it
+at this repo, and it'll find `docker-compose.yml` automatically. Set
+`QWEN_API_KEY` (and any of the other env vars referenced in the compose
+file) in Coolify's environment variables UI — they're substituted into the
+compose file at deploy time.
+
+## docker-compose with SigNoz (optional, not the default file)
+
+[`docker-compose.signoz.yml`](../docker-compose.signoz.yml) is a *separate*
+recipe meant to be merged into (or dropped alongside) SigNoz's own self-host
+compose file, so DriftWatch runs on the same Docker network as the SigNoz
+OTel collector — it depends on services (`otel-collector`, `query-service`)
+that only exist once merged that way. Deploying this file by itself (e.g.
+pointing a PaaS at it directly) fails with "service depends on undefined
+service otel-collector"; use the standalone `docker-compose.yml` above
+unless you're specifically doing this merge:
 
 ```bash
 git clone https://github.com/SigNoz/signoz
 cd signoz/deploy/docker
 docker compose up -d           # brings up SigNoz (UI on :8080)
-docker compose -f docker-compose.yaml -f docker-compose.override.yml up -d
+docker compose -f docker-compose.yaml -f /path/to/drift-watch/docker-compose.signoz.yml up -d
 ```
 
-Adjust the `build.context` path in the override file to wherever you
-cloned DriftWatch. Inside that network, `OTEL_EXPORTER_OTLP_ENDPOINT` and
+Adjust the `build.context` path in that file to wherever you cloned
+DriftWatch. Inside that network, `OTEL_EXPORTER_OTLP_ENDPOINT` and
 `SIGNOZ_URL` point at the collector/query-service's *service names*
-(`otel-collector`, `query-service`), not `localhost` — the override file
-already sets this up.
-
-The override file also brings up a **Redis** service and wires
-`REDIS_URL=redis://redis:6379` into the DriftWatch container, so autopilot
-state is shared and multi-process-safe out of the box. Autopilot itself ships
-**disabled** (`AUTOPILOT_ENABLED=0`); flip it on (and set channel secrets) via
-your `.env` when you're ready.
+(`otel-collector`, `query-service`), not `localhost` — the file already sets
+this up, and it brings up its own Redis service the same way the standalone
+file does.
 
 ## Enabling Autopilot
 

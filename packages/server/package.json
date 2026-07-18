@@ -6,7 +6,7 @@
   "author": "Victory Lucky",
   "type": "module",
   "engines": {
-    "node": ">=20.11"
+    "node": ">=22"
   },
   "scripts": {
     "start": "node --import ./dist/telemetry-bootstrap.js ./dist/server.js",

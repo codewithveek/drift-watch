@@ -1,17 +1,13 @@
-# Drop this into the SigNoz self-host repo's deploy/docker directory (or merge
-# into your own compose) so DriftWatch runs on the same network as the SigNoz
-# OTel collector. Then the OTLP endpoint is the collector's service name, not
-# localhost.
+# Standalone deployment — DriftWatch + Redis, no external services required.
+# This is the file platforms that auto-deploy a repo's docker-compose.yml
+# (Coolify, Railway, plain `docker compose up -d`, ...) will pick up.
 #
-#   git clone https://github.com/SigNoz/signoz
-#   cd signoz/deploy/docker
-#   docker compose up -d           # brings up SigNoz (UI on :8080)
-#   docker compose -f docker-compose.yaml -f docker-compose.override.yml up -d
-#
-# Build context is the driftwatch workspace root (not this file's directory) —
-# the server's Dockerfile uses `pnpm deploy` to pull in @driftwatch/sdk.
-# This deployment targets Qwen Cloud's OpenAI-compatible endpoint (see
-# packages/server/src/config/model-client.ts); supply QWEN_API_KEY.
+# OpenTelemetry export is optional. Point OTEL_EXPORTER_OTLP_ENDPOINT and
+# SIGNOZ_URL at a collector/query-service you already run elsewhere; left at
+# their localhost defaults (unreachable inside the container) the exporter
+# just logs failures and the server keeps running normally. To run DriftWatch
+# on the same network as a self-hosted SigNoz instead, see
+# docker-compose.signoz.yml.
 services:
   redis:
     image: redis:7-alpine
@@ -22,12 +18,12 @@ services:
 
   driftwatch:
     build:
-      context: ../../drift-watch   # adjust to where you cloned this
+      context: .
       dockerfile: packages/server/Dockerfile
     environment:
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-      SIGNOZ_URL: http://query-service:8080
-      SIGNOZ_API_KEY: ${SIGNOZ_API_KEY}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4318}
+      SIGNOZ_URL: ${SIGNOZ_URL:-http://localhost:8080}
+      SIGNOZ_API_KEY: ${SIGNOZ_API_KEY:-}
       # --- model client (Qwen Cloud, OpenAI-compatible) ---
       QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
       QWEN_API_KEY: ${QWEN_API_KEY:-}
@@ -52,8 +48,8 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - otel-collector
       - redis
+    restart: unless-stopped
 
 volumes:
   driftwatch-redis:
