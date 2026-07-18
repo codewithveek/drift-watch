@@ -11,8 +11,8 @@
 import { trace, metrics, SpanStatusCode, type Span } from '@opentelemetry/api';
 import { isCapturePayloadsEnabled } from './capture-config.js';
 
-const tracer = trace.getTracer('agentpulse');
-const meter = metrics.getMeter('agentpulse');
+const tracer = trace.getTracer('driftwatch');
+const meter = metrics.getMeter('driftwatch');
 
 const skillInvocationCounter = meter.createCounter('agent.tool.calls', {
   description: 'Count of skill (tool) invocations, labelled by name + outcome',

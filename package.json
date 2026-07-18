@@ -1,8 +1,8 @@
 {
-  "name": "agentpulse-workspace",
+  "name": "driftwatch-workspace",
   "version": "0.2.0",
   "private": true,
-  "description": "Workspace root for AgentPulse: a self-observing AI agent SDK (packages/sdk) and its reference Fastify server (packages/server).",
+  "description": "Workspace root for DriftWatch: a self-observing AI agent SDK (packages/sdk) and its reference Fastify server (packages/server).",
   "license": "MIT",
   "author": "Victory Lucky",
   "repository": {
@@ -19,11 +19,11 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "dev": "pnpm --filter @agentpulse/server dev",
-    "start": "pnpm --filter @agentpulse/server start",
-    "seed": "pnpm --filter @agentpulse/server seed",
-    "drift": "pnpm --filter @agentpulse/server drift",
-    "drift:dry-run": "pnpm --filter @agentpulse/server drift:dry-run"
+    "dev": "pnpm --filter @driftwatch/server dev",
+    "start": "pnpm --filter @driftwatch/server start",
+    "seed": "pnpm --filter @driftwatch/server seed",
+    "drift": "pnpm --filter @driftwatch/server drift",
+    "drift:dry-run": "pnpm --filter @driftwatch/server drift:dry-run"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

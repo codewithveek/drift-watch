@@ -1,24 +1,19 @@
-# AgentPulse
+# DriftWatch
 
 An AI agent SDK that **observes itself**. Every skill (tool) call and LLM
 step is traced via OpenTelemetry into a backend like [SigNoz](https://signoz.io),
 and an AI layer on top of those traces flags **behavioral drift** — shifts in
 tool-call mix, error rate, latency, or token spend between time windows.
 
-> `agentpulse` is provisionally taken on npm under a different project — the
-> package names below (`@agentpulse/sdk`, `@agentpulse/server`) are working
-> names for this pnpm workspace, not yet a final published identity. See
-> [Naming](#naming) at the bottom.
-
 This is a pnpm workspace with two packages:
 
 ```
 packages/
-├── sdk/      @agentpulse/sdk     — publishable. Zero AI provider SDKs bundled,
+├── sdk/      @driftwatch/sdk     — publishable. Zero AI provider SDKs bundled,
 │                                    zero direct process.env access. Every
 │                                    function takes typed config/clients as
 │                                    parameters.
-└── server/   @agentpulse/server  — the reference Fastify app. Depends on the
+└── server/   @driftwatch/server  — the reference Fastify app. Depends on the
                                      SDK via workspace:*, supplies demo skills
                                      and the one file where you wire up a real
                                      model provider.
@@ -32,10 +27,10 @@ functions. No installing OpenAI's SDK to talk to Anthropic, no dead weight in
 
 **Typed config, not scattered `process.env` reads.** Every setting the SDK
 needs — telemetry endpoint, agent step limit, drift-detector target — is a
-Zod-validated typed object (`AgentPulseConfig`), injected into whichever
-function needs it. `loadAgentPulseConfigFromEnv()` is a convenience loader for
-the common case, but you can build that object however you want: from your
-own app's parsed env config, a literal object in tests, anything.
+Zod-validated typed object (`DriftWatchConfig`), injected into whichever
+function needs it. `loadDriftWatchConfigFromEnv()` is a convenience loader
+for the common case, but you can build that object however you want: from
+your own app's parsed env config, a literal object in tests, anything.
 
 > Looking for guided docs instead of one long README? See
 > [`docs/`](./docs/README.md) — quickstart, config reference, architecture,
@@ -49,13 +44,13 @@ own app's parsed env config, a literal object in tests, anything.
 ## Typed config
 
 ```ts
-import { AgentPulseConfigSchema, loadAgentPulseConfigFromEnv } from '@agentpulse/sdk';
+import { DriftWatchConfigSchema, loadDriftWatchConfigFromEnv } from '@driftwatch/sdk';
 
 // convenience: read from process.env
-const config = loadAgentPulseConfigFromEnv();
+const config = loadDriftWatchConfigFromEnv();
 
 // or build one however your app already manages config
-const config = AgentPulseConfigSchema.parse({
+const config = DriftWatchConfigSchema.parse({
   telemetry: { serviceName: 'checkout-agent', environment: 'production' },
   agent: { maxSteps: 12 },
   driftDetection: { signozBaseUrl: 'https://signoz.internal' },
@@ -87,7 +82,7 @@ AI_GATEWAY_API_KEY=... pnpm dev
 **Any other provider** — install exactly that one package, swap two lines:
 
 ```ts
-// pnpm --filter @agentpulse/server add @ai-sdk/anthropic
+// pnpm --filter @driftwatch/server add @ai-sdk/anthropic
 import { anthropic } from '@ai-sdk/anthropic';
 export const modelClient = anthropic(process.env.MODEL ?? 'claude-3-5-sonnet-latest');
 ```
@@ -96,7 +91,7 @@ Same pattern for `@ai-sdk/openai` and `@ai-sdk/google`. For any
 OpenAI-compatible endpoint (Ollama, vLLM, Together, Groq, DeepSeek, ...):
 
 ```ts
-// pnpm --filter @agentpulse/server add @ai-sdk/openai
+// pnpm --filter @driftwatch/server add @ai-sdk/openai
 import { createOpenAI } from '@ai-sdk/openai';
 const openaiCompatibleClient = createOpenAI({
   baseURL: process.env.OPENAI_BASE_URL, // e.g. http://localhost:11434/v1
@@ -133,8 +128,8 @@ search — same pattern.
 ## Architecture
 
 ```
-POST /run ──▶ Fastify (auto-instrumented)                    @agentpulse/server
-                 └─ runAgentTask(...)                         @agentpulse/sdk
+POST /run ──▶ Fastify (auto-instrumented)                    @driftwatch/server
+                 └─ runAgentTask(...)                         @driftwatch/sdk
                      └─ span: agent.run (task id, skills used, token spend)
                          ├─ AI SDK generateText loop
                          │    ├─ span: gen_ai.step        (model, tokens, finish reason)
@@ -198,7 +193,7 @@ docker compose up -d   # UI on :8080
 ### 2. Configure a model client and run the server
 
 ```bash
-cd /path/to/agentpulse
+cd /path/to/drift-watch
 cp packages/server/.env.example packages/server/.env
 # fill in AI_GATEWAY_API_KEY (or edit packages/server/src/config/model-client.ts for a direct provider)
 pnpm install
@@ -231,8 +226,8 @@ Build context is the workspace root (the server's Dockerfile uses
 `pnpm deploy` to pull in the SDK as real files, not a workspace symlink):
 
 ```bash
-docker build -f packages/server/Dockerfile -t agentpulse-server .
-docker run --rm -p 3000:3000 --env-file packages/server/.env agentpulse-server
+docker build -f packages/server/Dockerfile -t driftwatch-server .
+docker run --rm -p 3000:3000 --env-file packages/server/.env driftwatch-server
 ```
 
 ## Security
@@ -257,20 +252,20 @@ docker run --rm -p 3000:3000 --env-file packages/server/.env agentpulse-server
 
 ## Using the SDK standalone
 
-`@agentpulse/sdk` doesn't require the reference server at all:
+`@driftwatch/sdk` doesn't require the reference server at all:
 
 ```ts
 import {
   runAgentTask,
   detectBehavioralDrift,
   bootstrapTelemetry,
-  loadAgentPulseConfigFromEnv,
-} from '@agentpulse/sdk';
+  loadDriftWatchConfigFromEnv,
+} from '@driftwatch/sdk';
 import { anthropic } from '@ai-sdk/anthropic';
 import { tool } from 'ai';
 import { z } from 'zod';
 
-const config = loadAgentPulseConfigFromEnv();
+const config = loadDriftWatchConfigFromEnv();
 bootstrapTelemetry(config.telemetry); // call before other imports run, e.g. via --import
 
 const modelClient = anthropic('claude-3-5-sonnet-latest');
@@ -299,7 +294,7 @@ const driftReport = await detectBehavioralDrift({
 ## Files
 
 **`packages/sdk/src/`** (publishable, no provider SDKs, no direct env access):
-- `config/schema.ts` — `AgentPulseConfigSchema` + `loadAgentPulseConfigFromEnv`.
+- `config/schema.ts` — `DriftWatchConfigSchema` + `loadDriftWatchConfigFromEnv`.
 - `model-client.ts` — the `ModelClient` type + helpers to read provider/model
   identity off an injected client.
 - `agent/runner.ts` — `runAgentTask`: takes `modelClient`, `tools`, `maxSteps`
@@ -329,10 +324,11 @@ const driftReport = await detectBehavioralDrift({
 
 ## Naming
 
-The npm name `agent-pulse` is already taken by another project, so
-`@agentpulse/sdk` / `@agentpulse/server` here are working names, not a final
-published identity — expect these to change before anything is actually
-published to npm.
+This project was built under the working name "AgentPulse" before settling
+on DriftWatch (`@driftwatch/sdk` / `@driftwatch/server`) as its published
+identity — `agentpulse`/`agent-pulse` were already taken on npm. If you spot
+a stray "AgentPulse" or `agentpulse` anywhere (an old log line, a comment,
+an external link), it's a leftover from that phase, not a second product.
 
 ## License
 

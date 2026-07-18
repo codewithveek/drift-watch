@@ -1,7 +1,7 @@
 {
-  "name": "@agentpulse/sdk",
+  "name": "@driftwatch/sdk",
   "version": "0.1.0",
-  "description": "Self-observing AI agent SDK: OpenTelemetry instrumentation for AI SDK agents plus an LLM-over-traces behavioral drift detector. Bring your own model client — no provider SDKs bundled. Publish name is provisional; see README.",
+  "description": "Self-observing AI agent SDK: OpenTelemetry instrumentation for AI SDK agents plus an LLM-over-traces behavioral drift detector. Bring your own model client — no provider SDKs bundled.",
   "type": "module",
   "license": "MIT",
   "author": "Victory Lucky",

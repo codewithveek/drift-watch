@@ -17,8 +17,8 @@
 import { trace, metrics, SpanStatusCode, type Span } from '@opentelemetry/api';
 import type { Telemetry } from 'ai';
 
-const tracer = trace.getTracer('agentpulse.ai-sdk');
-const meter = metrics.getMeter('agentpulse.ai-sdk');
+const tracer = trace.getTracer('driftwatch.ai-sdk');
+const meter = metrics.getMeter('driftwatch.ai-sdk');
 
 const tokenUsageCounter = meter.createCounter('agent.tokens', {
   description:

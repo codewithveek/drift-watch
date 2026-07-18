@@ -3,18 +3,18 @@
 ## Docker
 
 Build context is the **workspace root**, not `packages/server/` — the
-Dockerfile uses `pnpm deploy` to pull `@agentpulse/sdk` in as real files
+Dockerfile uses `pnpm deploy` to pull `@driftwatch/sdk` in as real files
 instead of a workspace symlink, so the runtime image doesn't need the whole
 monorepo:
 
 ```bash
-docker build -f packages/server/Dockerfile -t agentpulse-server .
-docker run --rm -p 3000:3000 --env-file packages/server/.env agentpulse-server
+docker build -f packages/server/Dockerfile -t driftwatch-server .
+docker run --rm -p 3000:3000 --env-file packages/server/.env driftwatch-server
 ```
 
 If you edited `packages/server/src/config/model-client.ts` to use a
 provider package other than the built-in gateway default, run
-`pnpm --filter @agentpulse/server add @ai-sdk/<provider>` first so it lands
+`pnpm --filter @driftwatch/server add @ai-sdk/<provider>` first so it lands
 in the lockfile before building — the Dockerfile installs with
 `--frozen-lockfile`.
 
@@ -35,7 +35,7 @@ What the image already does for you (see
 
 [`docker-compose.override.yml`](../docker-compose.override.yml) is meant to
 be merged into (or dropped alongside) SigNoz's own self-host compose file,
-so AgentPulse runs on the same Docker network as the SigNoz OTel collector:
+so DriftWatch runs on the same Docker network as the SigNoz OTel collector:
 
 ```bash
 git clone https://github.com/SigNoz/signoz
@@ -45,7 +45,7 @@ docker compose -f docker-compose.yaml -f docker-compose.override.yml up -d
 ```
 
 Adjust the `build.context` path in the override file to wherever you
-cloned AgentPulse. Inside that network, `OTEL_EXPORTER_OTLP_ENDPOINT` and
+cloned DriftWatch. Inside that network, `OTEL_EXPORTER_OTLP_ENDPOINT` and
 `SIGNOZ_URL` point at the collector/query-service's *service names*
 (`otel-collector`, `query-service`), not `localhost` — the override file
 already sets this up.
@@ -78,17 +78,16 @@ already sets this up.
   orchestrator health checks) — it returns `{ ok: true }` and nothing else,
   no information disclosure beyond liveness.
 
-## Publishing `@agentpulse/sdk`
+## Publishing `@driftwatch/sdk`
 
 The SDK package (`packages/sdk`) is structured to be publishable
 standalone — `files: ["dist"]`, a package-local README, `publishConfig:
-{"access": "public"}` for the scoped name. It is **not currently published**:
-the `agentpulse` name is already taken on npm under an unrelated project,
-so `@agentpulse/sdk` is a working name, not a reserved one. Before running
-`npm publish` for real:
+{"access": "public"}` for the scoped name. It is **not yet published to
+npm**, but `@driftwatch/sdk`/`driftwatch` are confirmed available (unlike
+the earlier `@agentpulse/*` working name, which collided with an existing
+package). Before running `npm publish` for real:
 
-1. Pick and reserve an actual package name/scope (see the suggestion at the
-   end of the root README's discussion, or search npm directly).
-2. Rename the package in `packages/sdk/package.json` and update the
-   `@agentpulse/sdk` imports across `packages/server`.
-3. Bump the version and fill in `packages/sdk/CHANGELOG.md`.
+1. Create/claim the `driftwatch` npm org so the `@driftwatch` scope
+   resolves to you.
+2. Bump the version and fill in `packages/sdk/CHANGELOG.md`.
+3. `pnpm --filter @driftwatch/sdk build && pnpm --filter @driftwatch/sdk publish`.

@@ -4,7 +4,7 @@ Gets you from a clone to a drift report. Five steps.
 
 ## 1. Bring up SigNoz
 
-AgentPulse's traces and metrics go to any OTLP/HTTP collector; the drift
+DriftWatch's traces and metrics go to any OTLP/HTTP collector; the drift
 detector queries a SigNoz-shaped query API specifically. Self-hosted SigNoz
 is the fastest way to get both:
 
@@ -19,8 +19,8 @@ You don't strictly need this to try the server — see step 4's dry-run mode
 ## 2. Install dependencies
 
 ```bash
-git clone https://github.com/codewithveek/drift-watch.git agentpulse
-cd agentpulse
+git clone https://github.com/codewithveek/drift-watch.git driftwatch
+cd driftwatch
 pnpm install
 ```
 

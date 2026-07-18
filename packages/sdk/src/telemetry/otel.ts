@@ -61,7 +61,7 @@ export function bootstrapTelemetry(
     resource: new Resource({
       [ATTR_SERVICE_NAME]: telemetryConfig.serviceName,
       [ATTR_SERVICE_VERSION]: telemetryConfig.serviceVersion,
-      'agent.kind': 'agentpulse',
+      'agent.kind': 'driftwatch',
       'deployment.environment': telemetryConfig.environment,
     }),
     traceExporter: new OTLPTraceExporter({

@@ -1,5 +1,5 @@
 # Drop this into the SigNoz self-host repo's deploy/docker directory (or merge
-# into your own compose) so AgentPulse runs on the same network as the SigNoz
+# into your own compose) so DriftWatch runs on the same network as the SigNoz
 # OTel collector. Then the OTLP endpoint is the collector's service name, not
 # localhost.
 #
@@ -8,14 +8,14 @@
 #   docker compose up -d           # brings up SigNoz (UI on :8080)
 #   docker compose -f docker-compose.yaml -f docker-compose.override.yml up -d
 #
-# Build context is the agentpulse workspace root (not this file's directory) —
-# the server's Dockerfile uses `pnpm deploy` to pull in @agentpulse/sdk.
+# Build context is the driftwatch workspace root (not this file's directory) —
+# the server's Dockerfile uses `pnpm deploy` to pull in @driftwatch/sdk.
 # Which provider key you need below depends on how you configured
 # packages/server/src/config/model-client.ts — the rest are harmless if unset.
 services:
-  agentpulse:
+  driftwatch:
     build:
-      context: ../../agentpulse   # adjust to where you cloned this
+      context: ../../drift-watch   # adjust to where you cloned this
       dockerfile: packages/server/Dockerfile
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318

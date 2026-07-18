@@ -52,7 +52,7 @@ that made the agent call this tool?"), but it also means anything sensitive
 a user types, or any PII a tool call carries, lands in your tracing
 backend's storage (ClickHouse, if you're running SigNoz self-hosted) —
 usually for as long as that backend retains data, which is a separate
-retention policy you control there, not in AgentPulse.
+retention policy you control there, not in DriftWatch.
 
 Set `OTEL_CAPTURE_PAYLOADS=0` (or `TelemetryConfig.capturePayloads = false`
 if building config programmatically) to stop attaching this content to

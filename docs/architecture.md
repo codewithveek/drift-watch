@@ -3,8 +3,8 @@
 ## Request flow
 
 ```
-POST /run ──▶ Fastify (auto-instrumented)                    @agentpulse/server
-                 └─ runAgentTask(...)                         @agentpulse/sdk
+POST /run ──▶ Fastify (auto-instrumented)                    @driftwatch/server
+                 └─ runAgentTask(...)                         @driftwatch/sdk
                      └─ span: agent.run (task id, skills used, token spend)
                          ├─ AI SDK generateText loop
                          │    ├─ span: gen_ai.step        (model, tokens, finish reason)
@@ -92,7 +92,7 @@ Three things the SDK deliberately does not own, and why:
   `tool()` + `withSkillExecutionSpan` pattern, not to be used in production.
 - **Config.** Every setting is a typed, Zod-validated object passed into
   the function that needs it — see [configuration.md](./configuration.md).
-  `loadAgentPulseConfigFromEnv()` is a convenience default, not a
+  `loadDriftWatchConfigFromEnv()` is a convenience default, not a
   requirement.
 
 ## What this can and can't run on

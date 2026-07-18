@@ -1,8 +1,9 @@
 {
-  "name": "@agentpulse/server",
+  "name": "@driftwatch/server",
   "version": "0.2.0",
   "private": true,
-  "description": "Reference Fastify server for AgentPulse. Demo skills (tools), the bring-your-own model-client wiring point, and the HTTP surface. Imports @agentpulse/sdk for everything reusable.",
+  "description": "Reference Fastify server for DriftWatch. Demo skills (tools), the bring-your-own model-client wiring point, and the HTTP surface. Imports @driftwatch/sdk for everything reusable.",
+  "author": "Victory Lucky",
   "type": "module",
   "engines": {
     "node": ">=20.11"
@@ -21,7 +22,7 @@
     "dist"
   ],
   "dependencies": {
-    "@agentpulse/sdk": "workspace:*",
+    "@driftwatch/sdk": "workspace:*",
     "@fastify/rate-limit": "^11.1.0",
     "ai": "^7.0.19",
     "fastify": "^5.1.0",

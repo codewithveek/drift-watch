@@ -1,18 +1,14 @@
-# @agentpulse/sdk
+# @driftwatch/sdk
 
 Self-observing AI agent SDK: OpenTelemetry instrumentation for
 [AI SDK](https://ai-sdk.dev) agents, plus an LLM-over-traces behavioral
 drift detector. Zero AI provider SDKs bundled, zero direct `process.env`
 access — every function takes typed config/clients as parameters.
 
-> **Naming note:** `@agentpulse/sdk` is a working name, not a final
-> published identity — `agentpulse` is already taken on npm under a
-> different project. See the [workspace README](../../README.md#naming).
-
 ## Install
 
 ```bash
-npm install @agentpulse/sdk ai zod
+npm install @driftwatch/sdk ai zod
 # plus whichever AI SDK provider package you want, e.g.:
 npm install @ai-sdk/anthropic
 ```
@@ -24,13 +20,13 @@ import {
   runAgentTask,
   detectBehavioralDrift,
   bootstrapTelemetry,
-  loadAgentPulseConfigFromEnv,
-} from '@agentpulse/sdk';
+  loadDriftWatchConfigFromEnv,
+} from '@driftwatch/sdk';
 import { anthropic } from '@ai-sdk/anthropic';
 import { tool } from 'ai';
 import { z } from 'zod';
 
-const config = loadAgentPulseConfigFromEnv();
+const config = loadDriftWatchConfigFromEnv();
 bootstrapTelemetry(config.telemetry); // call before other imports run, e.g. via --import
 
 const modelClient = anthropic('claude-3-5-sonnet-latest');
@@ -69,7 +65,7 @@ const driftReport = await detectBehavioralDrift({
   via `node --import`).
 - `withSkillExecutionSpan` — wrap a tool's `execute` so every call emits a
   labelled span + the `agent.tool.calls` / `agent.tool.duration` metrics.
-- `AgentPulseConfigSchema` / `loadAgentPulseConfigFromEnv` — Zod-validated
+- `DriftWatchConfigSchema` / `loadDriftWatchConfigFromEnv` — Zod-validated
   typed config for telemetry, agent, and drift-detection settings.
 
 Full docs, architecture, and the reference Fastify server that uses this

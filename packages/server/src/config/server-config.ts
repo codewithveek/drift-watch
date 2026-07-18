@@ -2,7 +2,7 @@ import { z } from 'zod';
 /**
  * Typed config for the parts of this server that are specific to *this*
  * Fastify app rather than the SDK (HTTP port/host, auth, body limits). Mirrors
- * the pattern used by @agentpulse/sdk's own config/schema.ts: nothing reads
+ * the pattern used by @driftwatch/sdk's own config/schema.ts: nothing reads
  * `process.env` except `loadServerConfigFromEnv`, and every function that
  * needs one of these values takes it as a typed parameter instead.
  */

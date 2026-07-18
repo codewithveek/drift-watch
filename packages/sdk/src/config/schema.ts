@@ -1,6 +1,6 @@
 /**
  * Typed configuration for the SDK. Nothing in this package reads
- * `process.env` directly except `loadAgentPulseConfigFromEnv` below, and
+ * `process.env` directly except `loadDriftWatchConfigFromEnv` below, and
  * that function is entirely optional — every SDK function takes its config
  * as a plain typed object, so a consumer can build one however they like:
  * from `process.env`, from a parsed `.env` via dotenv, from their own
@@ -8,10 +8,10 @@
  * a literal object in tests.
  *
  *   // env-based (convenience default)
- *   const config = loadAgentPulseConfigFromEnv();
+ *   const config = loadDriftWatchConfigFromEnv();
  *
  *   // or bring your own, validated against the same schema
- *   const config = AgentPulseConfigSchema.parse({
+ *   const config = DriftWatchConfigSchema.parse({
  *     telemetry: { serviceName: 'my-agent' },
  *     agent: { maxSteps: 12 },
  *   });
@@ -22,7 +22,7 @@ export const TelemetryConfigSchema = z.object({
   /** OTLP/HTTP collector endpoint, e.g. a SigNoz collector. */
   otlpEndpoint: z.string().default('http://localhost:4318'),
   /** Service name reported on every span/metric (OTel `service.name`). */
-  serviceName: z.string().default('agentpulse'),
+  serviceName: z.string().default('driftwatch'),
   serviceVersion: z.string().default('0.1.0'),
   /** Free-form deployment environment label, e.g. "production". */
   environment: z.string().default('development'),
@@ -50,23 +50,23 @@ export const DriftDetectionConfigSchema = z.object({
 });
 export type DriftDetectionConfig = z.infer<typeof DriftDetectionConfigSchema>;
 
-export const AgentPulseConfigSchema = z.object({
+export const DriftWatchConfigSchema = z.object({
   telemetry: TelemetryConfigSchema.default({}),
   agent: AgentConfigSchema.default({}),
   driftDetection: DriftDetectionConfigSchema.default({}),
 });
-export type AgentPulseConfig = z.infer<typeof AgentPulseConfigSchema>;
+export type DriftWatchConfig = z.infer<typeof DriftWatchConfigSchema>;
 
 /**
  * Convenience loader for the common case: build a validated
- * `AgentPulseConfig` straight from `process.env`. Pass a custom env-like
+ * `DriftWatchConfig` straight from `process.env`. Pass a custom env-like
  * object (e.g. a parsed `.env` file, or a subset object in tests) via the
  * `env` parameter instead of relying on the `process.env` default.
  */
-export function loadAgentPulseConfigFromEnv(
+export function loadDriftWatchConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env,
-): AgentPulseConfig {
-  return AgentPulseConfigSchema.parse({
+): DriftWatchConfig {
+  return DriftWatchConfigSchema.parse({
     telemetry: {
       otlpEndpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT,
       serviceName: env.OTEL_SERVICE_NAME,

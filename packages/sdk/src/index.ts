@@ -1,11 +1,11 @@
 // --- config ---
 export {
-  AgentPulseConfigSchema,
+  DriftWatchConfigSchema,
   TelemetryConfigSchema,
   AgentConfigSchema,
   DriftDetectionConfigSchema,
-  loadAgentPulseConfigFromEnv,
-  type AgentPulseConfig,
+  loadDriftWatchConfigFromEnv,
+  type DriftWatchConfig,
   type TelemetryConfig,
   type AgentConfig,
   type DriftDetectionConfig,

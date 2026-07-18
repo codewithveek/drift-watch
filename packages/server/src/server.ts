@@ -3,7 +3,7 @@
 // transitive imports (Fastify, etc.) are required.
 import Fastify from 'fastify';
 import rateLimit from '@fastify/rate-limit';
-import { assertModelClientIsConfigured, loadAgentPulseConfigFromEnv } from '@agentpulse/sdk';
+import { assertModelClientIsConfigured, loadDriftWatchConfigFromEnv } from '@driftwatch/sdk';
 import { registerRoutes } from './routes/agent.js';
 import { loadServerConfigFromEnv } from './config/server-config.js';
 import { modelClient } from './config/model-client.js';
@@ -12,7 +12,7 @@ import { tools } from './tools.js';
 assertModelClientIsConfigured(modelClient);
 
 const serverConfig = loadServerConfigFromEnv();
-const agentPulseConfig = loadAgentPulseConfigFromEnv();
+const driftWatchConfig = loadDriftWatchConfigFromEnv();
 
 const fastifyServer = Fastify({
   logger: {
@@ -30,7 +30,7 @@ await registerRoutes(fastifyServer, {
   modelClient,
   tools,
   serverConfig,
-  agentPulseConfig,
+  driftWatchConfig,
 });
 
 try {
@@ -38,7 +38,7 @@ try {
     port: serverConfig.port,
     host: serverConfig.host,
   });
-  fastifyServer.log.info(`AgentPulse listening on ${listeningAddress}`);
+  fastifyServer.log.info(`DriftWatch listening on ${listeningAddress}`);
 } catch (error) {
   fastifyServer.log.error(error);
   process.exit(1);

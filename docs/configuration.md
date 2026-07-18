@@ -1,24 +1,24 @@
 # Configuration reference
 
-AgentPulse has two typed, Zod-validated config objects — one owned by the
+DriftWatch has two typed, Zod-validated config objects — one owned by the
 SDK, one owned by the reference server — plus one file that isn't
 env-driven at all (`model-client.ts`). Nothing else in the codebase reads
 `process.env` directly; every function takes its config as a plain typed
 parameter, so you can build one however your app already manages config
 (env, a parsed `.env`, a literal object in tests, `convict`/`t3-env`/etc).
 
-## SDK config — `AgentPulseConfig`
+## SDK config — `DriftWatchConfig`
 
 Schema: [`packages/sdk/src/config/schema.ts`](../packages/sdk/src/config/schema.ts).
-Env loader: `loadAgentPulseConfigFromEnv()`.
+Env loader: `loadDriftWatchConfigFromEnv()`.
 
 ```ts
-import { AgentPulseConfigSchema, loadAgentPulseConfigFromEnv } from '@agentpulse/sdk';
+import { DriftWatchConfigSchema, loadDriftWatchConfigFromEnv } from '@driftwatch/sdk';
 
-const config = loadAgentPulseConfigFromEnv(); // convenience: reads process.env
+const config = loadDriftWatchConfigFromEnv(); // convenience: reads process.env
 
 // or build one however you want, validated against the same schema:
-const config = AgentPulseConfigSchema.parse({
+const config = DriftWatchConfigSchema.parse({
   telemetry: { serviceName: 'checkout-agent', environment: 'production' },
   agent: { maxSteps: 12 },
   driftDetection: { signozBaseUrl: 'https://signoz.internal' },
@@ -30,7 +30,7 @@ const config = AgentPulseConfigSchema.parse({
 | Env var | Field | Default | Notes |
 |---|---|---|---|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `otlpEndpoint` | `http://localhost:4318` | OTLP/HTTP collector base URL (traces at `/v1/traces`, metrics at `/v1/metrics`). |
-| `OTEL_SERVICE_NAME` | `serviceName` | `agentpulse` | Reported as OTel `service.name` on every span/metric. |
+| `OTEL_SERVICE_NAME` | `serviceName` | `driftwatch` | Reported as OTel `service.name` on every span/metric. |
 | — (`npm_package_version`) | `serviceVersion` | `0.1.0` | Set automatically by npm/pnpm when run via a package script. |
 | `NODE_ENV` | `environment` | `development` | Free-form deployment label (`deployment.environment` resource attribute). |
 | `OTEL_CAPTURE_PAYLOADS` | `capturePayloads` | `true` (set env to exactly `0` to disable) | Whether raw prompt text and tool-call inputs get attached to spans. See [security.md](./security.md#telemetry-payload-capture). |
@@ -92,7 +92,7 @@ AI_GATEWAY_API_KEY=... pnpm dev
 **Any other provider** — install exactly that one package, swap two lines:
 
 ```ts
-// pnpm --filter @agentpulse/server add @ai-sdk/anthropic
+// pnpm --filter @driftwatch/server add @ai-sdk/anthropic
 import { anthropic } from '@ai-sdk/anthropic';
 export const modelClient = anthropic(process.env.MODEL ?? 'claude-3-5-sonnet-latest');
 ```
@@ -101,7 +101,7 @@ Same pattern for `@ai-sdk/openai` / `@ai-sdk/google`. For any
 OpenAI-compatible endpoint (Ollama, vLLM, Together, Groq, DeepSeek, ...):
 
 ```ts
-// pnpm --filter @agentpulse/server add @ai-sdk/openai
+// pnpm --filter @driftwatch/server add @ai-sdk/openai
 import { createOpenAI } from '@ai-sdk/openai';
 const openaiCompatibleClient = createOpenAI({
   baseURL: process.env.OPENAI_BASE_URL, // e.g. http://localhost:11434/v1

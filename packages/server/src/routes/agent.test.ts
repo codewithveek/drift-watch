@@ -1,15 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import rateLimit from '@fastify/rate-limit';
-import { AgentPulseConfigSchema, type ModelClient } from '@agentpulse/sdk';
+import { DriftWatchConfigSchema, type ModelClient } from '@driftwatch/sdk';
 import { registerRoutes } from './agent.js';
 import type { ServerConfig } from '../config/server-config.js';
 
 const runAgentTaskMock = vi.fn();
 const detectBehavioralDriftMock = vi.fn();
 
-vi.mock('@agentpulse/sdk', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@agentpulse/sdk')>();
+vi.mock('@driftwatch/sdk', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@driftwatch/sdk')>();
   return {
     ...actual,
     runAgentTask: (...args: unknown[]) => runAgentTaskMock(...args),
@@ -82,7 +82,7 @@ async function buildTestServer(
     modelClient: 'fake-model' as unknown as ModelClient,
     tools: {},
     serverConfig,
-    agentPulseConfig: AgentPulseConfigSchema.parse({}),
+    driftWatchConfig: DriftWatchConfigSchema.parse({}),
   });
   await fastifyServer.ready();
   currentServer = fastifyServer;

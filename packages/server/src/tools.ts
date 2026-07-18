@@ -1,6 +1,6 @@
 /**
  * Demo skills (AI SDK tools) for this reference server. These are NOT part
- * of @agentpulse/sdk — the SDK's runAgentTask takes `tools` as a parameter
+ * of @driftwatch/sdk — the SDK's runAgentTask takes `tools` as a parameter
  * precisely so real deployments bring their own (DB lookups, HTTP calls,
  * vector search, ...). This file shows the pattern: `tool()` wrapping
  * `withSkillExecutionSpan` so every call still emits the SDK's labelled
@@ -8,7 +8,7 @@
  */
 import { tool } from 'ai';
 import { z } from 'zod';
-import { withSkillExecutionSpan } from '@agentpulse/sdk';
+import { withSkillExecutionSpan } from '@driftwatch/sdk';
 
 function simulateLatency(minimumMs: number, maximumMs: number): Promise<void> {
   const delayMs = minimumMs + Math.random() * (maximumMs - minimumMs);

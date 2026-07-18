@@ -1,13 +1,13 @@
 # Build context is the WORKSPACE ROOT, not this directory:
-#   docker build -f packages/server/Dockerfile -t agentpulse-server .
+#   docker build -f packages/server/Dockerfile -t driftwatch-server .
 #
-# Uses `pnpm deploy` to produce a self-contained copy of @agentpulse/server
-# with its workspace dependency (@agentpulse/sdk) resolved to real files
+# Uses `pnpm deploy` to produce a self-contained copy of @driftwatch/server
+# with its workspace dependency (@driftwatch/sdk) resolved to real files
 # instead of a symlink, so the runtime stage doesn't need the whole monorepo.
 #
 # If you edited packages/server/src/config/model-client.ts to use a provider
 # package other than the built-in gateway default, run
-# `pnpm --filter @agentpulse/server add @ai-sdk/<provider>` first so it's in
+# `pnpm --filter @driftwatch/server add @ai-sdk/<provider>` first so it's in
 # the lockfile before building.
 FROM node:20-alpine AS base
 RUN corepack enable
@@ -20,9 +20,9 @@ COPY packages/server/package.json packages/server/package.json
 RUN pnpm install --frozen-lockfile
 COPY packages/sdk packages/sdk
 COPY packages/server packages/server
-RUN pnpm --filter @agentpulse/sdk build
-RUN pnpm --filter @agentpulse/server build
-RUN pnpm --filter @agentpulse/server deploy --prod /deploy/server
+RUN pnpm --filter @driftwatch/sdk build
+RUN pnpm --filter @driftwatch/server build
+RUN pnpm --filter @driftwatch/server deploy --prod /deploy/server
 
 FROM node:20-alpine AS runtime
 ENV NODE_ENV=production

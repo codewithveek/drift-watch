@@ -1,6 +1,6 @@
-# AgentPulse docs
+# DriftWatch docs
 
-AgentPulse is an AI agent SDK that **observes itself**. Every skill (tool)
+DriftWatch is an AI agent SDK that **observes itself**. Every skill (tool)
 call and LLM step is traced via OpenTelemetry into a backend like
 [SigNoz](https://signoz.io), and an AI layer on top of those traces flags
 **behavioral drift** — shifts in tool-call mix, error rate, latency, or
@@ -13,8 +13,8 @@ This is a pnpm workspace with two packages:
 
 | Package | What it is |
 |---|---|
-| [`packages/sdk`](../packages/sdk) (`@agentpulse/sdk`) | Publishable. Zero AI provider SDKs bundled, zero direct `process.env` access. Every function takes typed config/clients as parameters. |
-| [`packages/server`](../packages/server) (`@agentpulse/server`) | The reference Fastify app. Depends on the SDK via `workspace:*`, supplies demo skills, and holds the one file where you wire up a real model provider. |
+| [`packages/sdk`](../packages/sdk) (`@driftwatch/sdk`) | Publishable. Zero AI provider SDKs bundled, zero direct `process.env` access. Every function takes typed config/clients as parameters. |
+| [`packages/server`](../packages/server) (`@driftwatch/server`) | The reference Fastify app. Depends on the SDK via `workspace:*`, supplies demo skills, and holds the one file where you wire up a real model provider. |
 
 ## Guides
 
@@ -31,7 +31,7 @@ This is a pnpm workspace with two packages:
 
 ## Using just the SDK
 
-If you don't want the reference server at all, `@agentpulse/sdk` works
+If you don't want the reference server at all, `@driftwatch/sdk` works
 standalone — see [`packages/sdk/README.md`](../packages/sdk/README.md) for
 an install + quickstart aimed at that use case.
 

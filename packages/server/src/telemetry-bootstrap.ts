@@ -15,9 +15,9 @@
  * shutdown time so this module's load order (and thus instrumentation
  * patching) is unaffected by anything server.ts does.
  */
-import { loadAgentPulseConfigFromEnv, bootstrapTelemetry } from '@agentpulse/sdk';
+import { loadDriftWatchConfigFromEnv, bootstrapTelemetry } from '@driftwatch/sdk';
 
-const agentPulseConfig = loadAgentPulseConfigFromEnv();
-export const telemetrySdk = bootstrapTelemetry(agentPulseConfig.telemetry, {
+const driftWatchConfig = loadDriftWatchConfigFromEnv();
+export const telemetrySdk = bootstrapTelemetry(driftWatchConfig.telemetry, {
   registerShutdownHandlers: false,
 });

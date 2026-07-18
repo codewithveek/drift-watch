@@ -5,22 +5,22 @@ import {
   runAgentTask,
   detectBehavioralDrift,
   type ModelClient,
-  type AgentPulseConfig,
-} from '@agentpulse/sdk';
+  type DriftWatchConfig,
+} from '@driftwatch/sdk';
 import type { ServerConfig } from '../config/server-config.js';
 
 export interface RegisterRoutesOptions {
   modelClient: ModelClient;
   tools: ToolSet;
   serverConfig: ServerConfig;
-  agentPulseConfig: AgentPulseConfig;
+  driftWatchConfig: DriftWatchConfig;
 }
 
 export async function registerRoutes(
   fastifyServer: FastifyInstance,
   options: RegisterRoutesOptions,
 ): Promise<void> {
-  const { modelClient, tools, serverConfig, agentPulseConfig } = options;
+  const { modelClient, tools, serverConfig, driftWatchConfig } = options;
 
   fastifyServer.get('/health', async () => ({ ok: true }));
 
@@ -52,7 +52,7 @@ export async function registerRoutes(
           prompt: request.body.prompt,
           modelClient,
           tools,
-          maxSteps: agentPulseConfig.agent.maxSteps,
+          maxSteps: driftWatchConfig.agent.maxSteps,
         });
         return { output: agentTaskResult.responseText, usage: agentTaskResult };
       } catch (error) {
@@ -79,7 +79,7 @@ export async function registerRoutes(
         return await detectBehavioralDrift({
           modelClient,
           isDryRun: serverConfig.driftDryRun,
-          driftDetectionConfig: agentPulseConfig.driftDetection,
+          driftDetectionConfig: driftWatchConfig.driftDetection,
         });
       } catch (error) {
         request.log.error({ error }, 'drift detection failed');

@@ -32,7 +32,7 @@ import {
 } from '../telemetry/usage-tracking.js';
 import { isCapturePayloadsEnabled } from '../telemetry/capture-config.js';
 
-const tracer = trace.getTracer('agentpulse');
+const tracer = trace.getTracer('driftwatch');
 const DEFAULT_MAXIMUM_AGENT_STEPS = 8;
 
 export interface RunAgentTaskOptions {
