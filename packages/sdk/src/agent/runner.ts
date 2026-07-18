@@ -31,6 +31,11 @@ import {
   type TokenUsageSummary,
 } from '../telemetry/usage-tracking.js';
 import { isCapturePayloadsEnabled } from '../telemetry/capture-config.js';
+import {
+  buildTokenBudgetStopConditions,
+  evaluateGuardrailBreach,
+  type AgentGuardrails,
+} from './guardrails.js';
 
 const tracer = trace.getTracer('driftwatch');
 const DEFAULT_MAXIMUM_AGENT_STEPS = 8;
@@ -41,6 +46,12 @@ export interface RunAgentTaskOptions {
   tools: ToolSet;
   /** Defaults to 8 when omitted. Thread this from AgentConfig.maxSteps. */
   maxSteps?: number;
+  /**
+   * Inline per-request guardrails (Loop 1). When omitted, no token/cost cap
+   * is enforced — only the step-count bound applies. Thread this from
+   * AgentConfig (see ../config/schema.ts).
+   */
+  guardrails?: AgentGuardrails;
 }
 
 export interface AgentTaskResult {
@@ -51,6 +62,10 @@ export interface AgentTaskResult {
   tokenUsage: TokenUsageSummary;
   providerName: string;
   modelIdentifier: string;
+  /** True when an inline guardrail cap was crossed on this run. */
+  guardrailTriggered: boolean;
+  /** Human-readable reason when guardrailTriggered is true. */
+  guardrailReason?: string;
 }
 
 export async function runAgentTask(
@@ -61,6 +76,7 @@ export async function runAgentTask(
     modelClient,
     tools,
     maxSteps = DEFAULT_MAXIMUM_AGENT_STEPS,
+    guardrails,
   } = options;
   const taskId = randomUUID();
   const modelClientDescriptor = describeModelClient(modelClient);
@@ -72,10 +88,14 @@ export async function runAgentTask(
     }
 
     try {
+      const stopConditions = [
+        stepCountIs(maxSteps),
+        ...(guardrails ? buildTokenBudgetStopConditions(guardrails) : []),
+      ];
       const generateTextResult = await generateText({
         model: modelClient,
         tools,
-        stopWhen: stepCountIs(maxSteps),
+        stopWhen: stopConditions,
         prompt,
         experimental_telemetry: {
           isEnabled: true,
@@ -87,6 +107,13 @@ export async function runAgentTask(
         (toolCall) => toolCall.toolName,
       );
 
+      const guardrailBreach = guardrails
+        ? evaluateGuardrailBreach(
+            summarizeTokenUsage(generateTextResult.usage),
+            guardrails,
+          )
+        : { breached: false as const };
+
       const agentTaskResult = buildAgentTaskResult({
         taskId,
         responseText: generateTextResult.text,
@@ -94,6 +121,8 @@ export async function runAgentTask(
         toolNamesCalled,
         tokenUsage: generateTextResult.usage,
         modelClientDescriptor,
+        guardrailTriggered: guardrailBreach.breached,
+        guardrailReason: guardrailBreach.reason,
       });
 
       recordAgentTaskOnSpan({ span: rootSpan, agentTaskResult });
@@ -119,6 +148,8 @@ function buildAgentTaskResult(options: {
   toolNamesCalled: string[];
   tokenUsage: LanguageModelUsage;
   modelClientDescriptor: ModelClientDescriptor;
+  guardrailTriggered: boolean;
+  guardrailReason?: string;
 }): AgentTaskResult {
   const {
     taskId,
@@ -127,6 +158,8 @@ function buildAgentTaskResult(options: {
     toolNamesCalled,
     tokenUsage,
     modelClientDescriptor,
+    guardrailTriggered,
+    guardrailReason,
   } = options;
   return {
     taskId,
@@ -136,6 +169,8 @@ function buildAgentTaskResult(options: {
     tokenUsage: summarizeTokenUsage(tokenUsage),
     providerName: modelClientDescriptor.providerName,
     modelIdentifier: modelClientDescriptor.modelIdentifier,
+    guardrailTriggered,
+    guardrailReason,
   };
 }
 
@@ -150,6 +185,10 @@ function recordAgentTaskOnSpan(options: {
   const { span, agentTaskResult } = options;
   span.setAttribute('agent.steps', agentTaskResult.stepCount);
   span.setAttribute('agent.skills_used', agentTaskResult.skillsUsed.join(','));
+  span.setAttribute('agent.guardrail_triggered', agentTaskResult.guardrailTriggered);
+  if (agentTaskResult.guardrailReason) {
+    span.setAttribute('agent.guardrail_reason', agentTaskResult.guardrailReason);
+  }
   recordUsageOnSpan({
     span,
     modelClientDescriptor: {

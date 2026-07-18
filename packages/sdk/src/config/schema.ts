@@ -40,6 +40,19 @@ export type TelemetryConfig = z.infer<typeof TelemetryConfigSchema>;
 export const AgentConfigSchema = z.object({
   /** Upper bound on the generateText tool-use loop's step count. */
   maxSteps: z.coerce.number().int().positive().default(8),
+  /**
+   * Inline guardrail (Loop 1): abort a single run once cumulative token
+   * usage crosses this cap. 0 disables the check. This is enforced *inside*
+   * the run loop, so a runaway request is stopped before it ever finishes —
+   * the drift detector's aggregate loop is too slow to catch a single call.
+   */
+  maxTokensPerTask: z.coerce.number().int().nonnegative().default(0),
+  /** Optional USD cap per run, derived from the per-1k prices below. 0 = off. */
+  maxCostUsd: z.coerce.number().nonnegative().default(0),
+  pricePer1kInput: z.coerce.number().nonnegative().default(0),
+  pricePer1kOutput: z.coerce.number().nonnegative().default(0),
+  /** What to do when a guardrail cap is crossed. */
+  onExceed: z.enum(['stop', 'flag']).default('stop'),
 });
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
@@ -76,6 +89,11 @@ export function loadDriftWatchConfigFromEnv(
     },
     agent: {
       maxSteps: env.AGENT_MAX_STEPS,
+      maxTokensPerTask: env.AGENT_MAX_TOKENS_PER_TASK,
+      maxCostUsd: env.AGENT_MAX_COST_USD,
+      pricePer1kInput: env.AGENT_PRICE_PER_1K_INPUT,
+      pricePer1kOutput: env.AGENT_PRICE_PER_1K_OUTPUT,
+      onExceed: env.AGENT_ON_EXCEED,
     },
     driftDetection: {
       signozBaseUrl: env.SIGNOZ_URL,

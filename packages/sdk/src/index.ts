@@ -25,6 +25,15 @@ export {
   type RunAgentTaskOptions,
   type AgentTaskResult,
 } from './agent/runner.js';
+export {
+  estimateCostUsd,
+  evaluateGuardrailBreach,
+  sumStepUsage,
+  buildTokenBudgetStopConditions,
+  type AgentGuardrails,
+  type CumulativeUsage,
+  type GuardrailBreach,
+} from './agent/guardrails.js';
 
 // --- drift detection ---
 export {
@@ -48,3 +57,35 @@ export {
   recordUsageOnSpan,
   type TokenUsageSummary,
 } from './telemetry/usage-tracking.js';
+
+// --- autopilot (Loop 2: drift-triggered remediation, pure decision layer) ---
+export {
+  ACTION_TYPES,
+  CONTROL_ACTIONS,
+  categorizeAction,
+  type ActionType,
+  type ActionCategory,
+  type ActionIntent,
+  type DriftSeverity,
+  type Approval,
+  type ApprovalStatus,
+  type AgentRuntimeState,
+  type AgentStatus,
+  type DriftHistoryEntry,
+  type ActionLogEntry,
+  type ActionOutcome,
+  type NotificationMessage,
+  type StateStore,
+  type Notifier,
+} from './autopilot/types.js';
+export {
+  evaluatePolicies,
+  computeWindowDeltas,
+  PolicyConfigSchema,
+  PolicyRuleSchema,
+  PolicyConditionSchema,
+  type PolicyConfig,
+  type PolicyRule,
+  type PolicyCondition,
+  type WindowDeltas,
+} from './autopilot/policy.js';

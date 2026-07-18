@@ -2,47 +2,47 @@
  * Bring your own model client — the ONE place a deployment wires up a
  * provider. Edit this file; nothing else needs to change.
  *
- * @driftwatch/sdk ships with zero AI provider SDKs installed. The default
- * below uses the Vercel AI Gateway, which is bundled inside the `ai` package
- * itself, so it works with no extra installs — just AI_GATEWAY_API_KEY (or
- * Vercel OIDC when deployed on Vercel).
+ * This deployment targets **Qwen Cloud**, which exposes an OpenAI-compatible
+ * endpoint, so we use the AI SDK's `createOpenAI` factory pointed at the Qwen
+ * base URL. Both `runAgentTask` (the agent) and `detectBehavioralDrift` (the
+ * drift judge) use the `modelClient` exported here — nowhere else in the
+ * codebase picks a provider.
  *
- * To call a provider directly instead, install exactly the one package you
- * need and swap the two lines below. For example, Anthropic:
+ * Credentials come from `.env` (never hardcode them):
+ *
+ *   QWEN_BASE_URL   OpenAI-compatible base URL for Qwen Cloud, e.g.
+ *                   https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+ *   QWEN_API_KEY    your Qwen Cloud API key
+ *   MODEL           model id, e.g. qwen-max / qwen-plus / qwen-turbo
+ *
+ * To target a different provider instead, install exactly the one package you
+ * need and swap the factory below. For example, Anthropic:
  *
  *   pnpm --filter @driftwatch/server add @ai-sdk/anthropic
- *
  *   import { anthropic } from '@ai-sdk/anthropic';
  *   export const modelClient: ModelClient = anthropic(
  *     process.env.MODEL ?? 'claude-3-5-sonnet-latest',
  *   );
  *
- * Same pattern for @ai-sdk/openai or @ai-sdk/google. For any OpenAI-compatible
- * endpoint (Ollama, vLLM, Together, Groq, DeepSeek, ...):
- *
- *   pnpm --filter @driftwatch/server add @ai-sdk/openai
- *
- *   import { createOpenAI } from '@ai-sdk/openai';
- *   const openaiCompatibleClient = createOpenAI({
- *     baseURL: process.env.OPENAI_BASE_URL, // e.g. http://localhost:11434/v1
- *     apiKey: process.env.OPENAI_API_KEY ?? 'not-used',
- *   });
- *   export const modelClient: ModelClient = openaiCompatibleClient(
- *     process.env.MODEL ?? 'llama3.1',
- *   );
- *
- * This file reads MODEL directly from process.env rather than through the
- * typed config schemas used elsewhere — it's the one deliberate exception,
- * since the whole point of this file is that you hand-edit it per
- * deployment. Everything downstream of it (runAgentTask, detectBehavioralDrift)
- * takes the resulting modelClient as a plain typed value, not an env lookup.
+ * This file reads QWEN_* / MODEL directly from process.env rather than through
+ * the typed config schemas used elsewhere — it's the one deliberate exception,
+ * since the whole point of this file is that you hand-edit it per deployment.
+ * Everything downstream (runAgentTask, detectBehavioralDrift) takes the
+ * resulting modelClient as a plain typed value, not an env lookup.
  *
  * The server refuses to start without a modelClient — there is no implicit
  * fallback beyond what you configure here.
  */
-import { gateway } from 'ai';
+import { createOpenAI } from '@ai-sdk/openai';
 import type { ModelClient } from '@driftwatch/sdk';
 
-export const modelClient: ModelClient = gateway(
-  process.env.MODEL ?? 'anthropic/claude-3-5-sonnet',
+const qwenCloud = createOpenAI({
+  baseURL:
+    process.env.QWEN_BASE_URL ??
+    'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+  apiKey: process.env.QWEN_API_KEY ?? '',
+});
+
+export const modelClient: ModelClient = qwenCloud(
+  process.env.MODEL ?? 'qwen3.7-max',
 );

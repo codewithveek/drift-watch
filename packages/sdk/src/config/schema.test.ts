@@ -15,7 +15,14 @@ describe('DriftWatchConfigSchema', () => {
         environment: 'development',
         capturePayloads: true,
       },
-      agent: { maxSteps: 8 },
+      agent: {
+        maxSteps: 8,
+        maxTokensPerTask: 0,
+        maxCostUsd: 0,
+        pricePer1kInput: 0,
+        pricePer1kOutput: 0,
+        onExceed: 'stop',
+      },
       driftDetection: { signozBaseUrl: 'http://localhost:8080', signozApiKey: '' },
     });
   });
