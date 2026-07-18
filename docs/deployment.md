@@ -78,9 +78,13 @@ safe `shadow` mode when enabled. A sensible rollout:
    in-memory store (fine for a single container / local demo).
 
 The console is served from the server at `/console/` when
-`packages/console/dist` exists — build it with `pnpm --filter @driftwatch/console build`
-(the server Dockerfile can include this step) and open `/console/` with your
-`AUTH_TOKEN`.
+`packages/console/dist` exists. The Docker build handles this for you — the
+build stage also runs `pnpm --filter @driftwatch/console build` and the
+runtime image copies its `dist` alongside the deployed server, so
+`docker build -f packages/server/Dockerfile -t driftwatch-server .` gives you
+both in one image. Open `/console/` with your `AUTH_TOKEN`. For non-Docker
+deployments, build the console yourself with
+`pnpm --filter @driftwatch/console build` before starting the server.
 
 ## Production checklist
 
