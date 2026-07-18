@@ -3,6 +3,12 @@
   "version": "0.2.0",
   "private": true,
   "description": "Workspace root for AgentPulse: a self-observing AI agent SDK (packages/sdk) and its reference Fastify server (packages/server).",
+  "license": "MIT",
+  "author": "Victory Lucky",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codewithveek/drift-watch.git"
+  },
   "type": "module",
   "engines": {
     "node": ">=20.11",

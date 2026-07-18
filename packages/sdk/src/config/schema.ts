@@ -26,6 +26,14 @@ export const TelemetryConfigSchema = z.object({
   serviceVersion: z.string().default('0.1.0'),
   /** Free-form deployment environment label, e.g. "production". */
   environment: z.string().default('development'),
+  /**
+   * Whether raw prompt text and tool-call inputs get attached to spans as
+   * attributes. Defaults to true (full debuggability). Set to false for
+   * deployments where prompts/tool inputs may carry PII or secrets that
+   * shouldn't land in the tracing backend — span/metric names and numeric
+   * usage data are still emitted either way.
+   */
+  capturePayloads: z.boolean().default(true),
 });
 export type TelemetryConfig = z.infer<typeof TelemetryConfigSchema>;
 
@@ -64,6 +72,7 @@ export function loadAgentPulseConfigFromEnv(
       serviceName: env.OTEL_SERVICE_NAME,
       serviceVersion: env.npm_package_version,
       environment: env.NODE_ENV,
+      capturePayloads: env.OTEL_CAPTURE_PAYLOADS === '0' ? false : undefined,
     },
     agent: {
       maxSteps: env.AGENT_MAX_STEPS,

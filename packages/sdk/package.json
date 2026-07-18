@@ -4,6 +4,27 @@
   "description": "Self-observing AI agent SDK: OpenTelemetry instrumentation for AI SDK agents plus an LLM-over-traces behavioral drift detector. Bring your own model client — no provider SDKs bundled. Publish name is provisional; see README.",
   "type": "module",
   "license": "MIT",
+  "author": "Victory Lucky",
+  "homepage": "https://github.com/codewithveek/drift-watch#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codewithveek/drift-watch.git",
+    "directory": "packages/sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/codewithveek/drift-watch/issues"
+  },
+  "keywords": [
+    "ai-agent",
+    "opentelemetry",
+    "observability",
+    "telemetry",
+    "drift-detection",
+    "ai-sdk",
+    "llm",
+    "vercel-ai-sdk",
+    "otel"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -15,6 +36,9 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=20.11"
   },

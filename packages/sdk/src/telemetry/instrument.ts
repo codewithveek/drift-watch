@@ -9,6 +9,7 @@
  * product-facing term in span/metric naming.
  */
 import { trace, metrics, SpanStatusCode, type Span } from '@opentelemetry/api';
+import { isCapturePayloadsEnabled } from './capture-config.js';
 
 const tracer = trace.getTracer('agentpulse');
 const meter = metrics.getMeter('agentpulse');
@@ -39,10 +40,12 @@ export async function withSkillExecutionSpan<SkillResult>(
 
   return tracer.startActiveSpan(`tool.${skillName}`, async (span) => {
     span.setAttribute('agent.tool.name', skillName);
-    span.setAttribute(
-      'agent.tool.input',
-      JSON.stringify(skillInput).slice(0, 512),
-    );
+    if (isCapturePayloadsEnabled()) {
+      span.setAttribute(
+        'agent.tool.input',
+        JSON.stringify(skillInput).slice(0, 512),
+      );
+    }
     try {
       const skillResult = await executeSkill(span);
       span.setStatus({ code: SpanStatusCode.OK });

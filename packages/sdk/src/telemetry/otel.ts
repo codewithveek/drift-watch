@@ -21,19 +21,42 @@ import {
 import { registerTelemetry } from 'ai';
 import type { TelemetryConfig } from '../config/schema.js';
 import { AiSdkOtelIntegration } from './ai-sdk-otel.js';
+import { setCapturePayloadsEnabled } from './capture-config.js';
+
+export interface BootstrapTelemetryOptions {
+  /**
+   * Registers SIGTERM/SIGINT handlers that flush the SDK and call
+   * `process.exit(0)`. Defaults to true, which is correct for the SDK used
+   * standalone (no other shutdown work to sequence against). A host that has
+   * its own shutdown sequence to run first — e.g. draining an HTTP server's
+   * in-flight requests before the process exits — should pass `false` here
+   * and call `sdk.shutdown()` itself at the right point. Two independent
+   * `process.exit(0)` callers racing on the same signal is exactly the bug
+   * this option exists to avoid: whichever resolves first kills the process,
+   * possibly before the other has finished draining or flushing.
+   */
+  registerShutdownHandlers?: boolean;
+}
 
 /**
  * Starts the OTel Node SDK and registers the AI SDK v7 Telemetry
- * integration. Also wires SIGTERM/SIGINT to flush and exit.
+ * integration.
  *
  * AI SDK v7's `experimental_telemetry` only emits when an integration is
  * registered — without this call, `isEnabled: true` on a generateText/
  * generateObject call is inert: no gen_ai step spans, no token counts.
  *
- * Returns the started NodeSDK so callers can shut it down manually if they
- * need finer control than the built-in signal handlers.
+ * Returns the started NodeSDK so callers can shut it down manually — either
+ * because they passed `registerShutdownHandlers: false`, or because they
+ * want finer control than the built-in signal handlers.
  */
-export function bootstrapTelemetry(telemetryConfig: TelemetryConfig): NodeSDK {
+export function bootstrapTelemetry(
+  telemetryConfig: TelemetryConfig,
+  options: BootstrapTelemetryOptions = {},
+): NodeSDK {
+  const { registerShutdownHandlers = true } = options;
+  setCapturePayloadsEnabled(telemetryConfig.capturePayloads);
+
   const sdk = new NodeSDK({
     resource: new Resource({
       [ATTR_SERVICE_NAME]: telemetryConfig.serviceName,
@@ -61,15 +84,17 @@ export function bootstrapTelemetry(telemetryConfig: TelemetryConfig): NodeSDK {
   sdk.start();
   registerTelemetry(new AiSdkOtelIntegration());
 
-  const shutDownTelemetry = async (): Promise<void> => {
-    try {
-      await sdk.shutdown();
-    } finally {
-      process.exit(0);
-    }
-  };
-  process.on('SIGTERM', shutDownTelemetry);
-  process.on('SIGINT', shutDownTelemetry);
+  if (registerShutdownHandlers) {
+    const shutDownTelemetry = async (): Promise<void> => {
+      try {
+        await sdk.shutdown();
+      } finally {
+        process.exit(0);
+      }
+    };
+    process.on('SIGTERM', shutDownTelemetry);
+    process.on('SIGINT', shutDownTelemetry);
+  }
 
   return sdk;
 }

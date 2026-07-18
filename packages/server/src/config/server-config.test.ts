@@ -13,6 +13,8 @@ describe('ServerConfigSchema', () => {
       authToken: '',
       maxPromptBytes: 8192,
       driftDryRun: false,
+      rateLimitMax: 30,
+      rateLimitWindowMs: 60_000,
     });
   });
 });

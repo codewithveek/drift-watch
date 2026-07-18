@@ -13,6 +13,7 @@ describe('AgentPulseConfigSchema', () => {
         serviceName: 'agentpulse',
         serviceVersion: '0.1.0',
         environment: 'development',
+        capturePayloads: true,
       },
       agent: { maxSteps: 8 },
       driftDetection: { signozBaseUrl: 'http://localhost:8080', signozApiKey: '' },
@@ -49,5 +50,16 @@ describe('loadAgentPulseConfigFromEnv', () => {
     const config = loadAgentPulseConfigFromEnv({} as NodeJS.ProcessEnv);
     expect(config.agent.maxSteps).toBe(8);
     expect(config.telemetry.serviceName).toBe('agentpulse');
+    expect(config.telemetry.capturePayloads).toBe(true);
+  });
+
+  it('disables payload capture only when OTEL_CAPTURE_PAYLOADS is exactly "0"', () => {
+    expect(
+      loadAgentPulseConfigFromEnv({ OTEL_CAPTURE_PAYLOADS: '0' } as NodeJS.ProcessEnv)
+        .telemetry.capturePayloads,
+    ).toBe(false);
+    expect(
+      loadAgentPulseConfigFromEnv({} as NodeJS.ProcessEnv).telemetry.capturePayloads,
+    ).toBe(true);
   });
 });

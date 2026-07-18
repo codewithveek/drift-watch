@@ -30,6 +30,7 @@ import {
   summarizeTokenUsage,
   type TokenUsageSummary,
 } from '../telemetry/usage-tracking.js';
+import { isCapturePayloadsEnabled } from '../telemetry/capture-config.js';
 
 const tracer = trace.getTracer('agentpulse');
 const DEFAULT_MAXIMUM_AGENT_STEPS = 8;
@@ -66,7 +67,9 @@ export async function runAgentTask(
 
   return tracer.startActiveSpan('agent.run', async (rootSpan) => {
     rootSpan.setAttribute('agent.task_id', taskId);
-    rootSpan.setAttribute('agent.prompt', prompt.slice(0, 512));
+    if (isCapturePayloadsEnabled()) {
+      rootSpan.setAttribute('agent.prompt', prompt.slice(0, 512));
+    }
 
     try {
       const generateTextResult = await generateText({

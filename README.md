@@ -37,6 +37,10 @@ function needs it. `loadAgentPulseConfigFromEnv()` is a convenience loader for
 the common case, but you can build that object however you want: from your
 own app's parsed env config, a literal object in tests, anything.
 
+> Looking for guided docs instead of one long README? See
+> [`docs/`](./docs/README.md) — quickstart, config reference, architecture,
+> deployment, and security.
+
 ## The idea in one line
 
 > Instrument an agent's decisions as telemetry, then run an LLM over that
@@ -233,12 +237,23 @@ docker run --rm -p 3000:3000 --env-file packages/server/.env agentpulse-server
 
 ## Security
 
-- `/run` and `/drift` are gated by a bearer token. Set `AUTH_TOKEN=<secret>` in
-  `.env`; clients pass `Authorization: Bearer <secret>`.
-- When `AUTH_TOKEN` is unset, the server refuses non-local IPs — model tokens
-  cost money, so no anonymous production access by accident.
+- `/run` and `/drift` are gated by a bearer token, compared with
+  `crypto.timingSafeEqual` (not `===`) so response timing can't be used to
+  guess it byte by byte. Set `AUTH_TOKEN=<secret>` in `.env`; clients pass
+  `Authorization: Bearer <secret>`.
+- When `AUTH_TOKEN` is unset, the server refuses everything outside RFC 1918
+  private ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) plus
+  loopback — model tokens cost money, so no anonymous production access by
+  accident.
 - `MAX_PROMPT_BYTES` (default 8 KiB) caps prompt size; `BODY_LIMIT` (128 KiB)
   caps overall request size.
+- `RATE_LIMIT_MAX` requests per `RATE_LIMIT_WINDOW_MS` (default 30/60s) are
+  enforced per client on `/run` and `/drift` — a leaked or shared token can't
+  be used to run up unbounded model spend.
+- `OTEL_CAPTURE_PAYLOADS` (default `1`) controls whether raw prompt text and
+  tool-call inputs get attached to spans. Set to `0` if prompts/tool inputs
+  may carry PII or secrets that shouldn't land in the tracing backend —
+  span/metric names and token counts are unaffected either way.
 
 ## Using the SDK standalone
 
@@ -298,6 +313,9 @@ const driftReport = await detectBehavioralDrift({
   metrics).
 - `telemetry/usage-tracking.ts` — shared token-usage summary + span attribute
   helpers.
+- `telemetry/capture-config.ts` — process-wide toggle (set by
+  `bootstrapTelemetry` from `TelemetryConfig.capturePayloads`) for whether
+  raw prompt/tool-input text is attached to spans.
 
 **`packages/server/src/`** (the reference app):
 - `config/model-client.ts` — **the one file to edit** for a real provider.

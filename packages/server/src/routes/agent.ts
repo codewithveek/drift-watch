@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { ToolSet } from 'ai';
 import {
@@ -25,6 +26,14 @@ export async function registerRoutes(
 
   fastifyServer.post<{ Body: { prompt: string } }>(
     '/run',
+    {
+      config: {
+        rateLimit: {
+          max: serverConfig.rateLimitMax,
+          timeWindow: serverConfig.rateLimitWindowMs,
+        },
+      },
+    },
     async (request, reply) => {
       if (!isRequestAuthorized(request, reply, serverConfig.authToken)) return;
 
@@ -53,20 +62,31 @@ export async function registerRoutes(
     },
   );
 
-  fastifyServer.get('/drift', async (request, reply) => {
-    if (!isRequestAuthorized(request, reply, serverConfig.authToken)) return;
+  fastifyServer.get(
+    '/drift',
+    {
+      config: {
+        rateLimit: {
+          max: serverConfig.rateLimitMax,
+          timeWindow: serverConfig.rateLimitWindowMs,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!isRequestAuthorized(request, reply, serverConfig.authToken)) return;
 
-    try {
-      return await detectBehavioralDrift({
-        modelClient,
-        isDryRun: serverConfig.driftDryRun,
-        driftDetectionConfig: agentPulseConfig.driftDetection,
-      });
-    } catch (error) {
-      request.log.error({ error }, 'drift detection failed');
-      return reply.code(500).send({ error: (error as Error).message });
-    }
-  });
+      try {
+        return await detectBehavioralDrift({
+          modelClient,
+          isDryRun: serverConfig.driftDryRun,
+          driftDetectionConfig: agentPulseConfig.driftDetection,
+        });
+      } catch (error) {
+        request.log.error({ error }, 'drift detection failed');
+        return reply.code(500).send({ error: (error as Error).message });
+      }
+    },
+  );
 }
 
 interface PromptValidationError {
@@ -115,23 +135,44 @@ function isRequestAuthorized(
   return false;
 }
 
+/**
+ * Constant-time comparison so an attacker probing the endpoint can't use
+ * response-time differences to recover the token byte by byte. The length
+ * check is a fast-path that leaks only the token's length, not its content.
+ */
 function isRequestBearerTokenValid(
   request: FastifyRequest,
   authToken: string,
 ): boolean {
   const authorizationHeader = request.headers.authorization ?? '';
   const [authScheme, bearerToken] = authorizationHeader.split(' ');
-  return authScheme === 'Bearer' && bearerToken === authToken;
+  if (authScheme !== 'Bearer' || typeof bearerToken !== 'string') return false;
+
+  const providedTokenBuffer = Buffer.from(bearerToken);
+  const expectedTokenBuffer = Buffer.from(authToken);
+  if (providedTokenBuffer.length !== expectedTokenBuffer.length) return false;
+  return timingSafeEqual(providedTokenBuffer, expectedTokenBuffer);
 }
 
+/**
+ * RFC 1918 private ranges only. Note 172.16.0.0/12 covers just
+ * 172.16.x.x-172.31.x.x — matching on the "172." prefix alone would
+ * wrongly admit all of 172.0.0.0/8, including public addresses.
+ */
 function isRequestFromLocalNetwork(request: FastifyRequest): boolean {
   const clientIpAddress = request.ip;
-  return (
+  if (
     clientIpAddress === '127.0.0.1' ||
     clientIpAddress === '::1' ||
     clientIpAddress === '::ffff:127.0.0.1' ||
     clientIpAddress.startsWith('10.') ||
-    clientIpAddress.startsWith('192.168.') ||
-    clientIpAddress.startsWith('172.')
-  );
+    clientIpAddress.startsWith('192.168.')
+  ) {
+    return true;
+  }
+
+  const privateClassBMatch = /^172\.(\d{1,3})\./.exec(clientIpAddress);
+  if (!privateClassBMatch) return false;
+  const secondOctet = Number(privateClassBMatch[1]);
+  return secondOctet >= 16 && secondOctet <= 31;
 }
