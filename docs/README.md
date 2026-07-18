@@ -7,14 +7,17 @@ call and LLM step is traced via OpenTelemetry into a backend like
 token spend between two time windows.
 
 > One line: instrument an agent's decisions as telemetry, then run an LLM
-> over that telemetry to notice when the agent starts behaving differently.
+> over that telemetry to notice when the agent starts behaving differently —
+> and, optionally, remediate it (pause / rollback / throttle) with a human in
+> the loop.
 
-This is a pnpm workspace with two packages:
+This is a pnpm workspace with three packages:
 
 | Package | What it is |
 |---|---|
-| [`packages/sdk`](../packages/sdk) (`@driftwatch/sdk`) | Publishable. Zero AI provider SDKs bundled, zero direct `process.env` access. Every function takes typed config/clients as parameters. |
-| [`packages/server`](../packages/server) (`@driftwatch/server`) | The reference Fastify app. Depends on the SDK via `workspace:*`, supplies demo skills, and holds the one file where you wire up a real model provider. |
+| [`packages/sdk`](../packages/sdk) (`@driftwatch/sdk`) | Publishable. Zero AI provider SDKs bundled, zero direct `process.env` access. Owns telemetry, drift detection, inline guardrails, and the pure policy engine + autopilot interfaces. Every function takes typed config/clients as parameters. |
+| [`packages/server`](../packages/server) (`@driftwatch/server`) | The reference Fastify app. Depends on the SDK via `workspace:*`, supplies demo skills, wires the model provider (Qwen Cloud), and owns all I/O: Redis/memory state store, Slack/Telegram/webhook notifiers, the autopilot scheduler, and the control-plane API. |
+| [`packages/console`](../packages/console) (`@driftwatch/console`) | Vite + React + Tailwind SPA. The operator control plane — pending-approvals queue, drift feed, action log, agent-health strip. Served from the server at `/console/` in production. |
 
 ## Guides
 

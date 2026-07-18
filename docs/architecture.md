@@ -77,6 +77,70 @@ baseline and a "current" window with a 2.5x multiplier on error rate,
 latency, and token spend, and an inverted tool mix. Useful for demos, CI,
 or trying `/drift` before you've generated any real traffic.
 
+## The Autopilot loop (Loop 2)
+
+Drift detection is the *perceive* step. Autopilot closes the loop —
+**perceive → reason → act** — with a human in the loop for anything
+destructive. There are two independent control loops:
+
+- **Loop 1 — inline guardrails** (SDK, synchronous). Per-`/run` token/cost
+  caps enforced *inside* the `generateText` loop via a `stopWhen` condition
+  that sums cumulative usage across steps, alongside `stepCountIs(maxSteps)`.
+  A runaway request aborts *before* it can pollute the drift windows. See
+  [configuration.md](./configuration.md#inline-guardrails--agent-sdk-per-request).
+- **Loop 2 — drift-triggered remediation** (server, asynchronous, aggregate).
+
+```
+scheduler tick (every SCAN_INTERVAL_MS)
+  └─ acquire leader lock (SET NX PX)  ← only one process runs the cycle
+      └─ detectBehavioralDrift()  →  DriftReport
+          └─ evaluatePolicies(report, policy)  →  ActionIntent[]   (pure, SDK)
+              ├─ notify_*   → dispatched immediately (Slack/Telegram/webhook)
+              └─ control_*  → ApprovalService.requestApproval()
+                                 └─ posts Approve/Reject to every channel
+                                     └─ resolve(id, decision)  ← console | Slack | Telegram
+                                         └─ executeControlAction()  → mutate shared state
+```
+
+**Pure vs. I/O split is preserved.** The SDK owns `evaluatePolicies` (a pure
+function mapping a `DriftReport` to `ActionIntent[]`) and the
+`StateStore`/`Notifier`/`ApprovalGateway` *interfaces*. The server implements
+them: Redis/memory store, Slack/Telegram/webhook notifiers, the scheduler,
+and the webhook routes.
+
+**Channel-agnostic approvals.** A control action (pause, rollback, throttle,
+switch_model) creates an `Approval` in the shared store and posts a prompt to
+every configured channel. Resolution is idempotent and atomic (Redis Lua CAS,
+or a guarded write in the memory store), so whichever channel acts first wins
+and the rest are no-ops — the console, a Slack button, and a Telegram button
+all resolve the *same* approval. A pending approval that isn't answered within
+`AUTOPILOT_APPROVAL_TIMEOUT_MS` resolves to `AUTOPILOT_APPROVAL_TIMEOUT_DECISION`
+(default: reject).
+
+**Multi-process safety.** With `REDIS_URL` set, N server processes share one
+store and coordinate via a `SET NX PX` leader lock keyed to the scan interval,
+so exactly one process runs each drift cycle while all of them can serve the
+console API and resolve approvals. Without Redis, an in-memory store is the
+zero-dependency single-process fallback for dev/demo.
+
+**Shadow mode.** `AUTOPILOT_MODE=shadow` runs the full loop but executes
+nothing — intended actions are logged to the audit log as `shadowed`. This is
+the safe default and the CI/demo path (`AUTOPILOT_ENABLED=1 AUTOPILOT_MODE=shadow
+DRIFT_DRY_RUN=1` drives the entire loop off fixtures with no external side
+effects).
+
+### Control plane + console
+
+A bearer-gated API (`src/routes/console.ts`, reusing the same
+`isRequestAuthorized` gate as `/run`) exposes the shared state: `GET /state`,
+`GET /drift/history`, `GET /approvals`, `POST /approvals/:id/resolve`,
+`GET /actions/log`, `POST /control/{pause,resume,rollback}`, and
+`POST /drift/scan` (manual trigger). The React console
+([`packages/console`](../packages/console)) is a Vite SPA that polls this API
+with the bearer token — Pending Approvals queue, drift verdict feed,
+action/audit log, and an agent-health strip. It's served in production from
+the server at `/console/` via `@fastify/static`.
+
 ## Bring-your-own-everything, by design
 
 Three things the SDK deliberately does not own, and why:

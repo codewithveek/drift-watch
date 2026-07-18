@@ -15,6 +15,21 @@ describe('ServerConfigSchema', () => {
       driftDryRun: false,
       rateLimitMax: 30,
       rateLimitWindowMs: 60_000,
+      redisUrl: '',
+      autopilotEnabled: false,
+      autopilotMode: 'shadow',
+      scanIntervalMs: 60_000,
+      cooldownMs: 300_000,
+      approvalTimeoutMs: 600_000,
+      approvalTimeoutDecision: 'rejected',
+      slackWebhookUrl: '',
+      slackSigningSecret: '',
+      telegramBotToken: '',
+      telegramChatId: '',
+      telegramSecretToken: '',
+      webhookUrl: '',
+      policiesJson: '',
+      policiesFile: '',
     });
   });
 });

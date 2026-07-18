@@ -32,16 +32,16 @@ Requires Node ≥20.11 and pnpm ≥9.
 cp packages/server/.env.example packages/server/.env
 ```
 
-Edit `packages/server/.env` and fill in `AI_GATEWAY_API_KEY` — the
-zero-install default routes through the
-[Vercel AI Gateway](https://vercel.com/docs/ai-gateway), bundled inside the
-`ai` package itself. No provider SDK to install for this path.
+Edit `packages/server/.env` and fill in `QWEN_API_KEY` — this deployment
+targets **Qwen Cloud**'s OpenAI-compatible endpoint via `@ai-sdk/openai`
+(already a dependency). `QWEN_BASE_URL` and `MODEL` (default `qwen-max`)
+have sensible defaults.
 
 ```bash
 pnpm dev
 ```
 
-Want a specific provider instead (Anthropic, OpenAI, Google, or any
+Want a different provider instead (Anthropic, OpenAI, Google, or any
 OpenAI-compatible endpoint like Ollama/vLLM/Together/Groq)? Edit the one
 file: `packages/server/src/config/model-client.ts`. See
 [configuration.md](./configuration.md#model-client) for the exact swap.
@@ -100,6 +100,28 @@ where tool-call mix, error rate, latency, and token spend have all shifted
 If you skip setting `AUTH_TOKEN` in `.env`, the server works fine on
 localhost but refuses requests from outside your private network — see
 [security.md](./security.md) before exposing this anywhere real.
+
+## Try the autopilot loop
+
+Run the full perceive→reason→act loop safely against fixtures — it evaluates
+policies and logs the actions it *would* take, without executing any or
+sending any messages:
+
+```bash
+AUTOPILOT_ENABLED=1 AUTOPILOT_MODE=shadow DRIFT_DRY_RUN=1 pnpm dev
+```
+
+Then open the operator console (approvals queue, drift feed, action log):
+
+```bash
+pnpm --filter @driftwatch/console dev   # dev server with API proxy + hot reload
+# or in production it's served from the server at http://localhost:3000/console/
+```
+
+Paste your `AUTH_TOKEN` into the console's token field. See
+[architecture.md](./architecture.md#the-autopilot-loop-loop-2) for how the loop
+works and [configuration.md](./configuration.md#autopilot--serverconfig-loop-2)
+for enabling Slack/Telegram approvals and Redis-backed multi-process state.
 
 ## What's next
 

@@ -3,7 +3,7 @@
 ## Authentication
 
 `/run` and `/drift` are gated by `isRequestAuthorized` in
-[`routes/agent.ts`](../packages/server/src/routes/agent.ts):
+[`routes/auth.ts`](../packages/server/src/routes/auth.ts):
 
 - **`AUTH_TOKEN` set** — requests must send `Authorization: Bearer <token>`.
   The comparison uses `crypto.timingSafeEqual` (after an equal-length
@@ -23,6 +23,39 @@ or too strict depending on where the proxy lives. See
 
 `/health` is intentionally unauthenticated — it returns `{ ok: true }` and
 nothing else, for load balancer / orchestrator health checks.
+
+The control-plane API (`/state`, `/drift/history`, `/approvals`,
+`/approvals/:id/resolve`, `/actions/log`, `/control/*`, `/drift/scan`) reuses
+this *exact same* `isRequestAuthorized` gate — there is one bearer story for
+the whole control plane, including the React console.
+
+## Integration webhook authentication
+
+The Slack and Telegram webhooks (`POST /integrations/slack/actions`,
+`POST /integrations/telegram/webhook`) do **not** use the bearer token — they
+are called by Slack/Telegram, not your operators, so they carry their own
+provider-specific signature verification
+([`routes/integrations.ts`](../packages/server/src/routes/integrations.ts)):
+
+- **Slack** — `X-Slack-Signature` is recomputed as an HMAC-SHA256 of
+  `v0:{timestamp}:{raw body}` keyed with `SLACK_SIGNING_SECRET`, compared in
+  constant time. Requests whose `X-Slack-Request-Timestamp` is more than 5
+  minutes off are rejected (replay-window defence). The raw body is read
+  verbatim (a raw `application/x-www-form-urlencoded` parser) because any
+  re-serialization would change the bytes the HMAC covers.
+- **Telegram** — `X-Telegram-Bot-Api-Secret-Token` is compared in constant
+  time against `TELEGRAM_SECRET_TOKEN` (the value you register with
+  `setWebhook`). This is Telegram's mechanism for proving a callback really
+  came from Telegram.
+
+Because approval resolution mutates the shared store atomically, a forged or
+duplicate callback that somehow passed verification still can't double-execute
+an action — the second `resolve` is a no-op. And a leaked bearer token can
+resolve approvals but cannot forge a Slack/Telegram callback (different secret,
+different code path).
+
+If either secret is unset, that integration's route rejects everything — it
+never silently accepts unsigned callbacks.
 
 ## Rate limiting
 
@@ -83,10 +116,16 @@ in-flight `/run` calls or drop the final export.
 
 ## What's still on you
 
-- **Model provider API keys** (`AI_GATEWAY_API_KEY`, `ANTHROPIC_API_KEY`,
-  etc.) — standard secret hygiene: `.env` is git-ignored
-  ([`.gitignore`](../.gitignore)) and Docker-ignored
+- **Model provider API keys** (`QWEN_API_KEY`, or whatever provider you wire
+  into `model-client.ts`) plus the autopilot channel secrets
+  (`SLACK_SIGNING_SECRET`, `TELEGRAM_BOT_TOKEN`/`TELEGRAM_SECRET_TOKEN`,
+  `SLACK_WEBHOOK_URL`, `DRIFT_WEBHOOK_URL`) — standard secret hygiene: `.env`
+  is git-ignored ([`.gitignore`](../.gitignore)) and Docker-ignored
   ([`.dockerignore`](../.dockerignore)), but rotate anything that leaks.
+- **Redis exposure.** When `REDIS_URL` is set it holds pending approvals, the
+  agent state, and the leader lock — put it on a private network and use
+  `rediss://` + auth if it leaves the host. Don't point it at a Redis reachable
+  from untrusted clients.
 - **Tool/skill implementations you add.** `withSkillExecutionSpan` traces
   *that* a tool ran and *how long it took* — it does not validate or
   sanitize what the tool does. A DB-lookup or HTTP-call skill you write is

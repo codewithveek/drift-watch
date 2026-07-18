@@ -10,9 +10,16 @@
 #
 # Build context is the driftwatch workspace root (not this file's directory) —
 # the server's Dockerfile uses `pnpm deploy` to pull in @driftwatch/sdk.
-# Which provider key you need below depends on how you configured
-# packages/server/src/config/model-client.ts — the rest are harmless if unset.
+# This deployment targets Qwen Cloud's OpenAI-compatible endpoint (see
+# packages/server/src/config/model-client.ts); supply QWEN_API_KEY.
 services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - driftwatch-redis:/data
+    restart: unless-stopped
+
   driftwatch:
     build:
       context: ../../drift-watch   # adjust to where you cloned this
@@ -21,14 +28,32 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       SIGNOZ_URL: http://query-service:8080
       SIGNOZ_API_KEY: ${SIGNOZ_API_KEY}
-      MODEL: ${MODEL:-anthropic/claude-3-5-sonnet}
-      AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      GOOGLE_GENERATIVE_AI_API_KEY: ${GOOGLE_GENERATIVE_AI_API_KEY:-}
+      # --- model client (Qwen Cloud, OpenAI-compatible) ---
+      QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      MODEL: ${MODEL:-qwen3.7-max}
       AUTH_TOKEN: ${AUTH_TOKEN:-}
+      # --- shared state (multi-process): point autopilot at the Redis above ---
+      REDIS_URL: redis://redis:6379
+      # --- autopilot (drift-triggered remediation loop) ---
+      AUTOPILOT_ENABLED: ${AUTOPILOT_ENABLED:-0}
+      AUTOPILOT_MODE: ${AUTOPILOT_MODE:-shadow}
+      AUTOPILOT_SCAN_INTERVAL_MS: ${AUTOPILOT_SCAN_INTERVAL_MS:-60000}
+      AUTOPILOT_APPROVAL_TIMEOUT_MS: ${AUTOPILOT_APPROVAL_TIMEOUT_MS:-600000}
+      AUTOPILOT_POLICIES: ${AUTOPILOT_POLICIES:-}
+      # --- notification / approval channels ---
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_SECRET_TOKEN: ${TELEGRAM_SECRET_TOKEN:-}
+      DRIFT_WEBHOOK_URL: ${DRIFT_WEBHOOK_URL:-}
       PORT: 3000
     ports:
       - "3000:3000"
     depends_on:
       - otel-collector
+      - redis
+
+volumes:
+  driftwatch-redis:

@@ -44,5 +44,5 @@ const qwenCloud = createOpenAI({
 });
 
 export const modelClient: ModelClient = qwenCloud(
-  process.env.MODEL ?? 'qwen3.7-max',
+  process.env.MODEL ?? 'qwen-max',
 );

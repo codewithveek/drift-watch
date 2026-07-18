@@ -13,9 +13,9 @@ docker run --rm -p 3000:3000 --env-file packages/server/.env driftwatch-server
 ```
 
 If you edited `packages/server/src/config/model-client.ts` to use a
-provider package other than the built-in gateway default, run
-`pnpm --filter @driftwatch/server add @ai-sdk/<provider>` first so it lands
-in the lockfile before building — the Dockerfile installs with
+provider package other than the bundled `@ai-sdk/openai` (Qwen Cloud)
+default, run `pnpm --filter @driftwatch/server add @ai-sdk/<provider>` first
+so it lands in the lockfile before building — the Dockerfile installs with
 `--frozen-lockfile`.
 
 What the image already does for you (see
@@ -50,6 +50,38 @@ cloned DriftWatch. Inside that network, `OTEL_EXPORTER_OTLP_ENDPOINT` and
 (`otel-collector`, `query-service`), not `localhost` — the override file
 already sets this up.
 
+The override file also brings up a **Redis** service and wires
+`REDIS_URL=redis://redis:6379` into the DriftWatch container, so autopilot
+state is shared and multi-process-safe out of the box. Autopilot itself ships
+**disabled** (`AUTOPILOT_ENABLED=0`); flip it on (and set channel secrets) via
+your `.env` when you're ready.
+
+## Enabling Autopilot
+
+Autopilot (the drift→remediation loop) is off by default and starts in the
+safe `shadow` mode when enabled. A sensible rollout:
+
+1. **Shadow first.** `AUTOPILOT_ENABLED=1 AUTOPILOT_MODE=shadow` — the loop
+   runs, evaluates policies, and writes intended actions to the audit log, but
+   executes nothing and sends no messages. Watch `/actions/log` (or the
+   console) for a cycle or two to confirm the policy does what you expect.
+2. **Wire channels.** Set `SLACK_WEBHOOK_URL` + `SLACK_SIGNING_SECRET` and/or
+   `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` + `TELEGRAM_SECRET_TOKEN`, and
+   register the webhook URLs with each provider (Slack: Interactivity request
+   URL → `/integrations/slack/actions`; Telegram: `setWebhook` with your
+   secret token → `/integrations/telegram/webhook`).
+3. **Enforce.** `AUTOPILOT_MODE=enforce` — notifications fire and control
+   actions create approvals that a human resolves from any channel.
+4. **Set `REDIS_URL`** for any deployment running more than one process, so
+   the leader lock ensures exactly one process runs each drift cycle and all
+   processes share approvals/state. Without it you get a single-process
+   in-memory store (fine for a single container / local demo).
+
+The console is served from the server at `/console/` when
+`packages/console/dist` exists — build it with `pnpm --filter @driftwatch/console build`
+(the server Dockerfile can include this step) and open `/console/` with your
+`AUTH_TOKEN`.
+
 ## Production checklist
 
 - **Set `AUTH_TOKEN`.** Without it, the server only accepts traffic from
@@ -69,6 +101,13 @@ already sets this up.
 - **Cap `AGENT_MAX_STEPS`** to bound per-request cost — this is your hard
   ceiling on how many tool-use/LLM round trips a single `/run` call can
   spend.
+- **Set the inline guardrails** (`AGENT_MAX_TOKENS_PER_TASK` / `AGENT_MAX_COST_USD`)
+  for a synchronous, per-request abort that fires before a runaway call can
+  even reach the drift windows.
+- **If Autopilot is enabled**, run `shadow` mode until you trust the policy,
+  set `REDIS_URL` for multi-process deployments, and keep
+  `AUTOPILOT_APPROVAL_TIMEOUT_DECISION=rejected` (the safe default) so a
+  missed approval fails closed.
 - **Graceful shutdown is already handled** — `SIGTERM`/`SIGINT` drain
   in-flight Fastify requests before flushing OTel and exiting (see
   [`server.ts`](../packages/server/src/server.ts)), so a rolling deploy or
