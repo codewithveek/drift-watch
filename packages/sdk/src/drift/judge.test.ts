@@ -10,10 +10,16 @@ import type { ModelClient } from '../model-client.js';
  * salvage/retry rather than throw a JSON SyntaxError.
  */
 
-function mockReply(text: string) {
+// The exact result shape `doGenerate` must return, derived from the mock so we
+// don't depend on @ai-sdk/provider's result-type name (which `ai` doesn't
+// re-export). The explicit annotation contextually types the literals below.
+type MockGenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
+
+function mockReply(text: string): MockGenerateResult {
   return {
-    content: [{ type: 'text' as const, text }],
-    finishReason: 'stop' as const,
+    content: [{ type: 'text', text }],
+    // Spec v4 finishReason is an object, not a bare string.
+    finishReason: { unified: 'stop', raw: 'stop' },
     usage: {
       inputTokens: { total: 100, noCache: 100, cacheRead: 0, cacheWrite: 0 },
       outputTokens: { total: 20, text: 20, reasoning: 0 },
@@ -57,6 +63,7 @@ describe('detectBehavioralDrift judge (dry-run fixtures)', () => {
     expect(report.verdict.drift).toBe(true);
     expect(report.verdict.severity).toBe('high');
     expect(report.verdict.reasons.length).toBeGreaterThan(0);
+    expect(report.judgeAttempts).toBe(1);
   });
 
   it('retries with a correction when the first reply is pure prose, then succeeds', async () => {
@@ -70,6 +77,7 @@ describe('detectBehavioralDrift judge (dry-run fixtures)', () => {
     });
 
     expect(report.verdict.drift).toBe(true);
+    expect(report.judgeAttempts).toBe(2);
     // Usage should accumulate across both attempts (2 x 100 input, 2 x 20 output).
     expect(report.judgeTokenUsage.inputTokens).toBe(200);
     expect(report.judgeTokenUsage.outputTokens).toBe(40);

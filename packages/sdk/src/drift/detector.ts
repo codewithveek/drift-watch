@@ -55,6 +55,13 @@ export interface DriftReport {
   currentWindowStats: WindowStats;
   verdict: DriftVerdict;
   judgeTokenUsage: TokenUsageSummary;
+  /**
+   * How many model calls the judge needed to get a schema-valid verdict
+   * (1 = the model returned valid JSON on the first try). Consistently >1
+   * is a signal the model/provider is struggling with the output format and
+   * burning extra tokens on retries.
+   */
+  judgeAttempts: number;
   providerName: string;
   modelIdentifier: string;
 }
@@ -100,7 +107,7 @@ export async function detectBehavioralDrift(
     : await queryLiveWindows(driftDetectionConfig);
 
   const modelClientDescriptor = describeModelClient(modelClient);
-  const { verdict, judgeTokenUsage } = await judgeDriftVerdict({
+  const { verdict, judgeTokenUsage, judgeAttempts } = await judgeDriftVerdict({
     baselineWindowStats,
     currentWindowStats,
     modelClient,
@@ -111,6 +118,7 @@ export async function detectBehavioralDrift(
     currentWindowStats,
     verdict,
     judgeTokenUsage,
+    judgeAttempts,
     providerName: modelClientDescriptor.providerName,
     modelIdentifier: modelClientDescriptor.modelIdentifier,
   };
@@ -390,7 +398,11 @@ async function judgeDriftVerdict(options: {
   baselineWindowStats: WindowStats;
   currentWindowStats: WindowStats;
   modelClient: ModelClient;
-}): Promise<{ verdict: DriftVerdict; judgeTokenUsage: TokenUsageSummary }> {
+}): Promise<{
+  verdict: DriftVerdict;
+  judgeTokenUsage: TokenUsageSummary;
+  judgeAttempts: number;
+}> {
   const { baselineWindowStats, currentWindowStats, modelClient } = options;
 
   const messages: ModelMessage[] = [
@@ -423,7 +435,11 @@ async function judgeDriftVerdict(options: {
 
     const parsed = parseDriftVerdict(text);
     if (parsed.ok) {
-      return { verdict: parsed.verdict, judgeTokenUsage: { ...usageTotals } };
+      return {
+        verdict: parsed.verdict,
+        judgeTokenUsage: { ...usageTotals },
+        judgeAttempts: attempt,
+      };
     }
 
     lastFailure = parsed.error;
