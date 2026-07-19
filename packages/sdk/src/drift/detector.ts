@@ -16,7 +16,7 @@
  * hitting SigNoz. Useful for demos, CI, or first-run before you've generated
  * traffic.
  */
-import { generateObject } from 'ai';
+import { generateText, type LanguageModelUsage, type ModelMessage } from 'ai';
 import { z } from 'zod';
 import type { ModelClient } from '../model-client.js';
 import { describeModelClient } from '../model-client.js';
@@ -24,10 +24,7 @@ import {
   DriftDetectionConfigSchema,
   type DriftDetectionConfig,
 } from '../config/schema.js';
-import {
-  summarizeTokenUsage,
-  type TokenUsageSummary,
-} from '../telemetry/usage-tracking.js';
+import type { TokenUsageSummary } from '../telemetry/usage-tracking.js';
 
 const DRIFT_JUDGE_FUNCTION_ID = 'drift-judge';
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -42,10 +39,14 @@ export interface WindowStats {
 }
 
 const DriftVerdictSchema = z.object({
-  drift: z.boolean(),
-  severity: z.enum(['none', 'low', 'medium', 'high']),
-  reasons: z.array(z.string()),
-  recommended_action: z.string(),
+  drift: z.boolean().describe('Whether the agent has behaviorally drifted enough to warrant a human alert.'),
+  severity: z
+    .enum(['none', 'low', 'medium', 'high'])
+    .describe('Severity of the drift, or "none" if drift is false.'),
+  reasons: z
+    .array(z.string())
+    .describe('Short bullet-point reasons citing the specific metrics that changed.'),
+  recommended_action: z.string().describe('One sentence recommending what to do next.'),
 });
 export type DriftVerdict = z.infer<typeof DriftVerdictSchema>;
 
@@ -363,6 +364,28 @@ function buildFixtureWindowStats(
   };
 }
 
+/**
+ * Ask the model to classify drift and return a schema-valid verdict.
+ *
+ * Why not `generateObject`? Its structured-output guarantee is only as good as
+ * the provider's `response_format` support. The AI SDK's OpenAI provider always
+ * sends `response_format: { type: 'json_schema' }` when a schema is present and
+ * injects NO JSON instruction into the prompt — it trusts the API to enforce
+ * shape. OpenAI-compatible endpoints that don't implement `json_schema` silently ignore that field, so
+ * the model, with nothing in the prompt telling it otherwise, happily returns a
+ * prose/markdown report and `generateObject` throws on the first `#`.
+ *
+ * So we drive the format from the prompt instead and parse defensively:
+ *   1. a strong system prompt + example demand a single raw JSON object,
+ *   2. `extractFirstJsonObject` salvages that object even if the model wraps it
+ *      in a code fence or prose,
+ *   3. Zod validates it, and
+ *   4. on any failure we re-prompt with the concrete error, up to
+ *      MAX_JUDGE_ATTEMPTS times, before giving up.
+ * This works against any provider — strict-structured-output or not.
+ */
+const MAX_JUDGE_ATTEMPTS = 3;
+
 async function judgeDriftVerdict(options: {
   baselineWindowStats: WindowStats;
   currentWindowStats: WindowStats;
@@ -370,29 +393,167 @@ async function judgeDriftVerdict(options: {
 }): Promise<{ verdict: DriftVerdict; judgeTokenUsage: TokenUsageSummary }> {
   const { baselineWindowStats, currentWindowStats, modelClient } = options;
 
-  const { object: verdict, usage } = await generateObject({
-    model: modelClient,
-    schema: DriftVerdictSchema,
-    experimental_telemetry: {
-      isEnabled: true,
-      functionId: DRIFT_JUDGE_FUNCTION_ID,
+  const messages: ModelMessage[] = [
+    {
+      role: 'user',
+      content: buildDriftJudgePrompt({ baselineWindowStats, currentWindowStats }),
     },
-    prompt: buildDriftJudgePrompt({ baselineWindowStats, currentWindowStats }),
-  });
+  ];
 
-  return { verdict, judgeTokenUsage: summarizeTokenUsage(usage) };
+  const usageTotals: TokenUsageSummary = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  };
+  let lastFailure = '';
+
+  for (let attempt = 1; attempt <= MAX_JUDGE_ATTEMPTS; attempt++) {
+    const { text, usage } = await generateText({
+      model: modelClient,
+      // Deterministic + non-creative: we want the verdict, not an essay.
+      temperature: 0,
+      system: DRIFT_JUDGE_SYSTEM_PROMPT,
+      messages,
+      telemetry: {
+        isEnabled: true,
+        functionId: DRIFT_JUDGE_FUNCTION_ID,
+      },
+    });
+    accumulateUsage(usageTotals, usage);
+
+    const parsed = parseDriftVerdict(text);
+    if (parsed.ok) {
+      return { verdict: parsed.verdict, judgeTokenUsage: { ...usageTotals } };
+    }
+
+    lastFailure = parsed.error;
+    // Feed the model back its own reply plus the concrete failure so it can
+    // self-correct on the next turn.
+    messages.push({ role: 'assistant', content: text });
+    messages.push({ role: 'user', content: buildCorrectionPrompt(parsed.error) });
+  }
+
+  throw new Error(
+    `drift judge did not return a schema-valid JSON verdict after ` +
+      `${MAX_JUDGE_ATTEMPTS} attempts. Last failure: ${lastFailure}`,
+  );
 }
+
+type DriftVerdictParseResult =
+  | { ok: true; verdict: DriftVerdict }
+  | { ok: false; error: string };
+
+function parseDriftVerdict(modelText: string): DriftVerdictParseResult {
+  const jsonText = extractFirstJsonObject(modelText);
+  if (jsonText === null) {
+    return { ok: false, error: 'reply contained no JSON object.' };
+  }
+
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(jsonText);
+  } catch (error) {
+    return {
+      ok: false,
+      error: `extracted text was not valid JSON: ${(error as Error).message}`,
+    };
+  }
+
+  const validated = DriftVerdictSchema.safeParse(parsedJson);
+  if (!validated.success) {
+    return {
+      ok: false,
+      error: `JSON did not match the required schema: ${validated.error.issues
+        .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+        .join('; ')}`,
+    };
+  }
+
+  return { ok: true, verdict: validated.data };
+}
+
+/**
+ * Pull the first complete, brace-balanced JSON object out of arbitrary model
+ * text. Handles the object being wrapped in a ```json fence, prefixed with a
+ * markdown report, or trailed by commentary. Tracks string literals and escapes
+ * so a `}` inside a string value never terminates the scan early. Returns null
+ * when no balanced object is present.
+ */
+export function extractFirstJsonObject(text: string): string | null {
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const haystack = fenceMatch ? fenceMatch[1] : text;
+
+  const start = haystack.indexOf('{');
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let isEscaped = false;
+
+  for (let i = start; i < haystack.length; i++) {
+    const char = haystack[i];
+
+    if (inString) {
+      if (isEscaped) {
+        isEscaped = false;
+      } else if (char === '\\') {
+        isEscaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+    } else if (char === '{') {
+      depth++;
+    } else if (char === '}') {
+      depth--;
+      if (depth === 0) return haystack.slice(start, i + 1);
+    }
+  }
+
+  return null;
+}
+
+function accumulateUsage(
+  totals: TokenUsageSummary,
+  usage: LanguageModelUsage,
+): void {
+  totals.inputTokens = (totals.inputTokens ?? 0) + (usage.inputTokens ?? 0);
+  totals.outputTokens = (totals.outputTokens ?? 0) + (usage.outputTokens ?? 0);
+  totals.totalTokens = (totals.totalTokens ?? 0) + (usage.totalTokens ?? 0);
+}
+
+const DRIFT_JUDGE_SYSTEM_PROMPT = `You are an SRE copilot that classifies whether an AI agent's behavior has drifted enough to warrant a human alert.
+
+You MUST reply with a SINGLE raw JSON object and NOTHING else. No markdown, no code fences, no headings, no bullet points, no prose before or after the object. Any output that is not a lone JSON object is a failure.
+
+The JSON object must have exactly these keys:
+- "drift": boolean — true if the drift warrants a human alert, otherwise false.
+- "severity": one of "none", "low", "medium", or "high" (use "none" when "drift" is false).
+- "reasons": array of short strings, each naming a specific metric that changed (e.g. "p95 latency 180ms -> 450ms").
+- "recommended_action": a single sentence recommending what to do next.
+
+Example of a correctly formatted reply (structure only — do not reuse these values):
+{"drift":true,"severity":"high","reasons":["p95 latency 180ms -> 450ms","error rate 2% -> 9%","search_docs share 40% -> 75%"],"recommended_action":"Page the on-call engineer to investigate the search_docs regression."}`;
 
 function buildDriftJudgePrompt(options: {
   baselineWindowStats: WindowStats;
   currentWindowStats: WindowStats;
 }): string {
   const { baselineWindowStats, currentWindowStats } = options;
-  return `You are an SRE copilot monitoring an AI agent for behavioral drift.
-Compare the CURRENT window against the BASELINE and decide whether the agent's
-behavior has drifted enough to warrant a human alert. Consider shifts in
-tool-call mix, rising error rate, latency regressions, and token-spend spikes.
+  return `Compare the CURRENT window against the BASELINE and decide whether the agent's behavior has drifted enough to warrant a human alert. Consider shifts in tool-call mix, rising error rate, latency regressions, and token-spend spikes.
 
 BASELINE: ${JSON.stringify(baselineWindowStats)}
-CURRENT:  ${JSON.stringify(currentWindowStats)}`;
+CURRENT:  ${JSON.stringify(currentWindowStats)}
+
+Reply with ONLY the JSON object described in your instructions.`;
+}
+
+function buildCorrectionPrompt(failure: string): string {
+  return `Your previous reply was rejected: ${failure}
+
+Reply again with ONLY a single raw JSON object — no markdown, no code fences, no commentary — using exactly the keys "drift", "severity", "reasons", and "recommended_action".`;
 }
