@@ -68,7 +68,8 @@ const consoleDistDir = join(
 if (existsSync(consoleDistDir)) {
   await fastifyServer.register(fastifyStatic, {
     root: consoleDistDir,
-    prefix: '/console/',
+  prefix: '/console',
+    redirect: true,
   });
 }
 
