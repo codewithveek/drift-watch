@@ -14,12 +14,16 @@ import {
   Card,
   EmptyState,
   Icons,
+  Pager,
   SeverityBadge,
   Skeleton,
   Spinner,
   StatusDot,
   timeAgo,
+  usePagination,
 } from './ui.tsx';
+
+const PAGE_SIZE = 10;
 
 const POLL_MS = 4000;
 
@@ -270,7 +274,7 @@ function ConnectionButton({ token, onSaveToken }: { token: string; onSaveToken: 
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-panel px-2.5 text-sm font-medium text-ink-2 ring-1 ring-inset ring-line transition-colors hover:bg-panel-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent-bright)]"
+        className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-panel px-2.5 text-sm font-medium text-ink-2 ring-1 ring-inset ring-line transition-colors hover:bg-panel-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-bright"
         aria-haspopup="dialog"
         aria-expanded={open}
       >
@@ -337,7 +341,7 @@ function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () =>
       <button
         onClick={onDismiss}
         aria-label="Dismiss error"
-        className="-m-1 rounded p-1 text-danger-text/70 transition-colors hover:text-danger-text focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--color-accent-bright)]"
+        className="-m-1 rounded p-1 text-danger-text/70 transition-colors hover:text-danger-text focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent-bright"
       >
         <Icons.X width={15} height={15} />
       </button>
@@ -569,8 +573,13 @@ function ApprovalsQueue({
 /* ------------------------------------------------------------ drift feed --- */
 
 function DriftFeed({ drift, loaded, now }: { drift: DriftHistoryEntry[]; loaded: boolean; now: number }) {
+  const pager = usePagination(drift.length, PAGE_SIZE);
   return (
-    <Card title="Drift verdicts" icon={<Icons.Pulse />}>
+    <Card
+      title="Drift verdicts"
+      icon={<Icons.Pulse />}
+      action={loaded && drift.length > PAGE_SIZE ? <Pager pager={pager} /> : undefined}
+    >
       {!loaded ? (
         <ul className="space-y-3">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -589,7 +598,7 @@ function DriftFeed({ drift, loaded, now }: { drift: DriftHistoryEntry[]; loaded:
         </EmptyState>
       ) : (
         <ul className="-my-2 divide-y divide-line">
-          {drift.slice(0, 12).map((d) => (
+          {drift.slice(pager.start, pager.end).map((d) => (
             <li key={d.id} className="flex items-start justify-between gap-3 py-2.5">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
@@ -622,8 +631,13 @@ function DriftFeed({ drift, loaded, now }: { drift: DriftHistoryEntry[]; loaded:
 /* ------------------------------------------------------------ action log --- */
 
 function ActionLogView({ log, loaded, now }: { log: ActionLogEntry[]; loaded: boolean; now: number }) {
+  const pager = usePagination(log.length, PAGE_SIZE);
   return (
-    <Card title="Action & audit log" icon={<Icons.History />}>
+    <Card
+      title="Action & audit log"
+      icon={<Icons.History />}
+      action={loaded && log.length > PAGE_SIZE ? <Pager pager={pager} /> : undefined}
+    >
       {!loaded ? (
         <div className="space-y-2.5">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -647,7 +661,7 @@ function ActionLogView({ log, loaded, now }: { log: ActionLogEntry[]; loaded: bo
               </tr>
             </thead>
             <tbody>
-              {log.slice(0, 20).map((e) => (
+              {log.slice(pager.start, pager.end).map((e) => (
                 <tr key={e.id} className="border-t border-line transition-colors hover:bg-panel-2/50">
                   <td className="whitespace-nowrap px-4 py-2 tabular-nums text-ink-3">{timeAgo(e.at, now)}</td>
                   <td className="px-4 py-2 font-mono text-ink">{e.action}</td>

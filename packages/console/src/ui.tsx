@@ -1,4 +1,5 @@
 /** Shared presentational primitives + formatting helpers for the console. */
+import { useEffect, useState } from 'react';
 import type { ButtonHTMLAttributes, ReactNode, SVGProps } from 'react';
 import type { AgentStatus, DriftSeverity } from './api.ts';
 
@@ -87,6 +88,16 @@ export const Icons = {
       <path d="M12 7v5l3 2" />
     </Icon>
   ),
+  ChevronLeft: (p: SVGProps<SVGSVGElement>) => (
+    <Icon {...p}>
+      <path d="m15 18-6-6 6-6" />
+    </Icon>
+  ),
+  ChevronRight: (p: SVGProps<SVGSVGElement>) => (
+    <Icon {...p}>
+      <path d="m9 18 6-6-6-6" />
+    </Icon>
+  ),
 };
 
 /* ---------------------------------------------------------------- spinner -- */
@@ -118,7 +129,7 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 const BUTTON_BASE =
   'inline-flex items-center justify-center gap-1.5 rounded-lg font-medium whitespace-nowrap ' +
   'transition-colors duration-150 disabled:pointer-events-none disabled:opacity-45 ' +
-  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent-bright)]';
+  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-bright';
 
 const BUTTON_VARIANT = {
   primary: 'bg-accent text-white hover:bg-accent-hover shadow-sm shadow-black/20',
@@ -153,6 +164,83 @@ export function Button({
       {loading ? <Spinner /> : icon}
       {children}
     </button>
+  );
+}
+
+/* -------------------------------------------------------------- icon btn -- */
+
+export function IconButton({
+  label,
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-ink-2 transition-colors hover:bg-panel-2 hover:text-ink disabled:pointer-events-none disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-bright"
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
+/* ------------------------------------------------------------ pagination -- */
+
+export interface PaginationState {
+  page: number;
+  pageCount: number;
+  start: number;
+  end: number;
+  from: number;
+  to: number;
+  total: number;
+  prev: () => void;
+  next: () => void;
+}
+
+/** Slice-based pagination that clamps the page when the source list shrinks. */
+export function usePagination(total: number, pageSize: number): PaginationState {
+  const [page, setPage] = useState(1);
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const current = Math.min(page, pageCount);
+
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
+
+  const start = (current - 1) * pageSize;
+  const end = Math.min(start + pageSize, total);
+  return {
+    page: current,
+    pageCount,
+    start,
+    end,
+    from: total === 0 ? 0 : start + 1,
+    to: end,
+    total,
+    prev: () => setPage((p) => Math.max(1, Math.min(p, pageCount) - 1)),
+    next: () => setPage((p) => Math.min(pageCount, Math.min(p, pageCount) + 1)),
+  };
+}
+
+export function Pager({ pager }: { pager: PaginationState }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="whitespace-nowrap text-xs tabular-nums text-ink-3">
+        {pager.from}–{pager.to} <span className="text-ink-3/70">of</span> {pager.total}
+      </span>
+      <div className="flex items-center gap-0.5">
+        <IconButton label="Previous page" onClick={pager.prev} disabled={pager.page <= 1}>
+          <Icons.ChevronLeft width={16} height={16} />
+        </IconButton>
+        <IconButton label="Next page" onClick={pager.next} disabled={pager.page >= pager.pageCount}>
+          <Icons.ChevronRight width={16} height={16} />
+        </IconButton>
+      </div>
+    </div>
   );
 }
 
