@@ -10,7 +10,7 @@ Turn DriftWatch from a passive observability library into an **autonomous SRE ag
 
 ## 1. Qwen Cloud model client (`packages/server`)
 - Add `@ai-sdk/openai` dependency to the server package.
-- Rewrite `src/config/model-client.ts` to use `createOpenAI({ baseURL: QWEN_BASE_URL, apiKey: QWEN_API_KEY })` with `MODEL` default `qwen-max` (OpenAI-compatible endpoint). Secrets read from `.env` only — never hardcoded.
+- Rewrite `src/config/model-client.ts` to use `createOpenAI({ baseURL: QWEN_BASE_URL, apiKey: QWEN_API_KEY })` with `MODEL` default `qwen3.7-max` (OpenAI-compatible endpoint). Secrets read from `.env` only — never hardcoded.
 - Update `.env.example` with `QWEN_BASE_URL`, `QWEN_API_KEY`, `MODEL`.
 
 ## 2. Inline guardrails — Loop 1 (`packages/sdk`)

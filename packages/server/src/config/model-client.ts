@@ -13,7 +13,7 @@
  *   QWEN_BASE_URL   OpenAI-compatible base URL for Qwen Cloud, e.g.
  *                   https://dashscope-intl.aliyuncs.com/compatible-mode/v1
  *   QWEN_API_KEY    your Qwen Cloud API key
- *   MODEL           model id, e.g. qwen-max / qwen-plus / qwen-turbo
+ *   MODEL           model id, e.g. qwen3.7-max / qwen-plus / qwen-turbo
  *
  * To target a different provider instead, install exactly the one package you
  * need and swap the factory below. For example, Anthropic:
@@ -44,5 +44,5 @@ const qwenCloud = createOpenAI({
 });
 
 export const modelClient: ModelClient = qwenCloud(
-  process.env.MODEL ?? 'qwen-max',
+  process.env.MODEL ?? 'qwen3.7-max',
 );

@@ -3,6 +3,7 @@
  * Thin wrapper around @driftwatch/sdk's detectBehavioralDrift using this
  * server's configured model client and env-sourced config.
  */
+import 'dotenv/config';
 import { detectBehavioralDrift, loadDriftWatchConfigFromEnv } from '@driftwatch/sdk';
 import { loadServerConfigFromEnv } from '../config/server-config.js';
 import { modelClient } from '../config/model-client.js';

@@ -35,7 +35,7 @@ function driftReport(overrides: {
     },
     judgeTokenUsage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
     providerName: 'qwen',
-    modelIdentifier: 'qwen-max',
+    modelIdentifier: 'qwen3.7-max',
   };
 }
 

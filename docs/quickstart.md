@@ -34,7 +34,7 @@ cp packages/server/.env.example packages/server/.env
 
 Edit `packages/server/.env` and fill in `QWEN_API_KEY` — this deployment
 targets **Qwen Cloud**'s OpenAI-compatible endpoint via `@ai-sdk/openai`
-(already a dependency). `QWEN_BASE_URL` and `MODEL` (default `qwen-max`)
+(already a dependency). `QWEN_BASE_URL` and `MODEL` (default `qwen3.7-max`)
 have sensible defaults.
 
 ```bash

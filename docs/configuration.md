@@ -155,17 +155,17 @@ const qwenCloud = createOpenAI({
   baseURL: process.env.QWEN_BASE_URL ?? 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
   apiKey: process.env.QWEN_API_KEY ?? '',
 });
-export const modelClient = qwenCloud(process.env.MODEL ?? 'qwen-max');
+export const modelClient = qwenCloud(process.env.MODEL ?? 'qwen3.7-max');
 ```
 ```bash
-QWEN_API_KEY=... MODEL=qwen-max pnpm dev
+QWEN_API_KEY=... MODEL=qwen3.7-max pnpm dev
 ```
 
 | Env var | Default | Notes |
 |---|---|---|
 | `QWEN_BASE_URL` | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | Qwen Cloud OpenAI-compatible base URL. |
 | `QWEN_API_KEY` | `''` | Your Qwen Cloud API key. Required to make real model calls. |
-| `MODEL` | `qwen-max` | Model id — e.g. `qwen-max` / `qwen-plus` / `qwen-turbo`. |
+| `MODEL` | `qwen3.7-max` | Model id — e.g. `qwen3.7-max` / `qwen-plus` / `qwen-turbo`. |
 
 **Any other provider** — install exactly that one package, swap two lines:
 
