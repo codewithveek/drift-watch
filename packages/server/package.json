@@ -10,8 +10,8 @@
   },
   "scripts": {
     "start": "node --import ./dist/telemetry-bootstrap.js ./dist/server.js",
-  "dev": "tsx watch --include .env --clear-screen=false --import ./src/telemetry-bootstrap.ts ./src/server.ts",
- "build": "tsc",
+    "dev": "tsx watch --include .env --clear-screen=false --import ./src/telemetry-bootstrap.ts ./src/server.ts",
+    "build": "tsc",
     "typecheck": "tsc --noEmit",
     "drift": "tsx ./src/cli/drift.ts",
     "drift:dry-run": "cross-env DRIFT_DRY_RUN=1 tsx ./src/cli/drift.ts",
