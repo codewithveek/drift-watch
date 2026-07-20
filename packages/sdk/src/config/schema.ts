@@ -27,6 +27,13 @@ export const TelemetryConfigSchema = z.object({
   /** Free-form deployment environment label, e.g. "production". */
   environment: z.string().default('development'),
   /**
+   * Extra headers attached to every OTLP export (traces, metrics, logs).
+   * Empty for self-hosted SigNoz. For SigNoz Cloud, the ingestion key goes
+   * here: `{ 'signoz-ingestion-key': '<key>' }`. The env loader below parses
+   * these from OTEL_EXPORTER_OTLP_HEADERS in the standard `k=v,k2=v2` form.
+   */
+  otlpHeaders: z.record(z.string()).default({}),
+  /**
    * Whether raw prompt text and tool-call inputs get attached to spans as
    * attributes. Defaults to true (full debuggability). Set to false for
    * deployments where prompts/tool inputs may carry PII or secrets that
@@ -71,6 +78,27 @@ export const DriftWatchConfigSchema = z.object({
 export type DriftWatchConfig = z.infer<typeof DriftWatchConfigSchema>;
 
 /**
+ * Parse the standard OTEL_EXPORTER_OTLP_HEADERS format (`k=v,k2=v2`) into a
+ * header map. Returns undefined for empty/absent input so the schema's `{}`
+ * default applies. Only the first `=` splits each pair, so values may contain
+ * `=`; keys and values are trimmed and empty keys are skipped.
+ */
+function parseOtlpHeaders(
+  raw: string | undefined,
+): Record<string, string> | undefined {
+  if (!raw) return undefined;
+  const headers: Record<string, string> = {};
+  for (const pair of raw.split(',')) {
+    const separatorIndex = pair.indexOf('=');
+    if (separatorIndex === -1) continue;
+    const key = pair.slice(0, separatorIndex).trim();
+    const value = pair.slice(separatorIndex + 1).trim();
+    if (key) headers[key] = value;
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+/**
  * Convenience loader for the common case: build a validated
  * `DriftWatchConfig` straight from `process.env`. Pass a custom env-like
  * object (e.g. a parsed `.env` file, or a subset object in tests) via the
@@ -86,6 +114,7 @@ export function loadDriftWatchConfigFromEnv(
       serviceVersion: env.npm_package_version,
       environment: env.NODE_ENV,
       capturePayloads: env.OTEL_CAPTURE_PAYLOADS === '0' ? false : undefined,
+      otlpHeaders: parseOtlpHeaders(env.OTEL_EXPORTER_OTLP_HEADERS),
     },
     agent: {
       maxSteps: env.AGENT_MAX_STEPS,

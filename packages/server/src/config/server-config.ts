@@ -19,7 +19,7 @@ export const ServerConfigSchema = z.object({
   /** Use built-in drift fixtures instead of querying SigNoz. */
   driftDryRun: z.boolean().default(false),
   /** Max requests per client (by IP, or by bearer token when set) per rateLimitWindowMs on /run and /drift. */
-  rateLimitMax: z.coerce.number().int().positive().default(30),
+  rateLimitMax: z.coerce.number().int().positive().default(100),
   rateLimitWindowMs: z.coerce.number().int().positive().default(60_000),
 
   // --- Autopilot (Loop 2) -------------------------------------------------

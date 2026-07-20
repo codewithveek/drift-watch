@@ -90,7 +90,8 @@ default, so the SDK runs with none of them set):
 
 | Env var | Config path | Default | Purpose |
 | --- | --- | --- | --- |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `telemetry.otlpEndpoint` | `http://localhost:4318` | OTLP/HTTP collector endpoint |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `telemetry.otlpEndpoint` | `http://localhost:4318` | OTLP/HTTP base endpoint; traces, metrics and logs go to `<endpoint>/v1/{traces,metrics,logs}` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | `telemetry.otlpHeaders` | `{}` | Headers on every OTLP export (`k=v,k2=v2`). For SigNoz Cloud: `signoz-ingestion-key=<key>` |
 | `OTEL_SERVICE_NAME` | `telemetry.serviceName` | `driftwatch` | `service.name` on every span/metric |
 | `OTEL_CAPTURE_PAYLOADS` | `telemetry.capturePayloads` | `true` (set `0` to disable) | Attach prompt/tool-input text to spans |
 | `AGENT_MAX_STEPS` | `agent.maxSteps` | `8` | Upper bound on the tool-use loop |
@@ -128,7 +129,11 @@ const config = DriftWatchConfigSchema.parse({
   fixture-based demos/CI.
 - `bootstrapTelemetry` — starts the OTel Node SDK and registers the AI SDK
   v7 telemetry bridge. Call once, before other application code (typically
-  via `node --import`).
+  via `node --import`). Exports traces, metrics and logs over OTLP/HTTP.
+  Metrics use **delta** temporality (SigNoz's recommendation) so the drift
+  detector's windowed `sum()`/`p95` queries are meaningful; logs carry
+  `trace_id`/`span_id` (via the pino auto-instrumentation) for trace↔log
+  correlation.
 - `withSkillExecutionSpan` — wrap a tool's `execute` so every call emits a
   labelled span + the `agent.tool.calls` / `agent.tool.duration` metrics.
 - `DriftWatchConfigSchema` / `loadDriftWatchConfigFromEnv` — Zod-validated

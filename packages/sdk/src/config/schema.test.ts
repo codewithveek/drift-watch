@@ -14,6 +14,7 @@ describe('DriftWatchConfigSchema', () => {
         serviceVersion: '0.1.0',
         environment: 'development',
         capturePayloads: true,
+        otlpHeaders: {},
       },
       agent: {
         maxSteps: 8,
@@ -58,6 +59,23 @@ describe('loadDriftWatchConfigFromEnv', () => {
     expect(config.agent.maxSteps).toBe(8);
     expect(config.telemetry.serviceName).toBe('driftwatch');
     expect(config.telemetry.capturePayloads).toBe(true);
+  });
+
+  it('parses OTEL_EXPORTER_OTLP_HEADERS into a header map (k=v,k2=v2)', () => {
+    const config = loadDriftWatchConfigFromEnv({
+      OTEL_EXPORTER_OTLP_HEADERS: 'signoz-ingestion-key=abc123, x-scope=team=a',
+    } as NodeJS.ProcessEnv);
+    // Only the first "=" splits, so values may contain "=".
+    expect(config.telemetry.otlpHeaders).toEqual({
+      'signoz-ingestion-key': 'abc123',
+      'x-scope': 'team=a',
+    });
+  });
+
+  it('defaults otlpHeaders to {} when OTEL_EXPORTER_OTLP_HEADERS is unset', () => {
+    expect(
+      loadDriftWatchConfigFromEnv({} as NodeJS.ProcessEnv).telemetry.otlpHeaders,
+    ).toEqual({});
   });
 
   it('disables payload capture only when OTEL_CAPTURE_PAYLOADS is exactly "0"', () => {

@@ -1,19 +1,41 @@
 /**
  * OTel bootstrap. `bootstrapTelemetry` must be called before any other
  * application code runs (typically from a `node --import` preload script)
- * so auto-instrumentation can patch Fastify, http, etc. before they're
+ * so auto-instrumentation can patch Fastify, http, pino, etc. before they're
  * required. This module takes a typed `TelemetryConfig` rather than reading
  * `process.env` itself — the caller decides where that config comes from.
  *
- * Exports OTLP over HTTP/proto. Self-hosted SigNoz's collector listens on
- * 4318 (HTTP/proto) and 4317 (gRPC); we use HTTP.
+ * All three signals are exported over OTLP HTTP/proto to
+ * `${otlpEndpoint}/v1/{traces,metrics,logs}`. Self-hosted SigNoz's collector
+ * listens on 4318 (HTTP/proto) and 4317 (gRPC); we use HTTP. For SigNoz
+ * Cloud, point `otlpEndpoint` at the regional ingest host and pass the
+ * ingestion key via `otlpHeaders` (`{ 'signoz-ingestion-key': '<key>' }`) —
+ * self-hosted collectors need no headers.
+ *
+ * Metrics use DELTA temporality (SigNoz's recommendation). This is not
+ * cosmetic: the drift detector sums our counters (agent.tool.calls,
+ * agent.tokens) over time windows, and summing DELTA samples yields "activity
+ * during the window". The OTel default is CUMULATIVE — each export re-sends
+ * the running total — and summing those would produce a meaningless, ever-
+ * growing number. So the temporality choice here is what makes the detector's
+ * windowed `sum()` queries correct.
+ *
+ * Logs: the bundled pino auto-instrumentation (enabled by default below) both
+ * injects trace_id/span_id into every Fastify log line for trace<->log
+ * correlation and emits those lines as OTel log records — which the
+ * LogRecordProcessor registered here ships to SigNoz.
  */
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-proto';
-import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
-import { Resource } from '@opentelemetry/resources';
+import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-proto';
+import {
+  AggregationTemporality,
+  PeriodicExportingMetricReader,
+} from '@opentelemetry/sdk-metrics';
+import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
+import { resourceFromAttributes } from '@opentelemetry/resources';
 import {
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION,
@@ -57,8 +79,13 @@ export function bootstrapTelemetry(
   const { registerShutdownHandlers = true } = options;
   setCapturePayloadsEnabled(telemetryConfig.capturePayloads);
 
+  // Empty for self-hosted SigNoz; carries the `signoz-ingestion-key` for
+  // SigNoz Cloud. Attached to every OTLP exporter so all three signals
+  // authenticate identically.
+  const otlpHeaders = telemetryConfig.otlpHeaders;
+
   const sdk = new NodeSDK({
-    resource: new Resource({
+    resource: resourceFromAttributes({
       [ATTR_SERVICE_NAME]: telemetryConfig.serviceName,
       [ATTR_SERVICE_VERSION]: telemetryConfig.serviceVersion,
       'agent.kind': 'driftwatch',
@@ -66,17 +93,33 @@ export function bootstrapTelemetry(
     }),
     traceExporter: new OTLPTraceExporter({
       url: `${telemetryConfig.otlpEndpoint}/v1/traces`,
+      headers: otlpHeaders,
     }),
     metricReader: new PeriodicExportingMetricReader({
       exporter: new OTLPMetricExporter({
         url: `${telemetryConfig.otlpEndpoint}/v1/metrics`,
+        headers: otlpHeaders,
+        // DELTA is what makes the drift detector's windowed sum() queries
+        // meaningful — see this module's header comment.
+        temporalityPreference: AggregationTemporality.DELTA,
       }),
       exportIntervalMillis: 10_000,
     }),
+    logRecordProcessors: [
+      new BatchLogRecordProcessor({
+        
+        exporter: new OTLPLogExporter({
+          url: `${telemetryConfig.otlpEndpoint}/v1/logs`,
+          headers: otlpHeaders,
+        }),
+      }),
+    ],
     instrumentations: [
       getNodeAutoInstrumentations({
         '@opentelemetry/instrumentation-fs': { enabled: false },
         '@opentelemetry/instrumentation-dns': { enabled: false },
+        // Left enabled (the default): injects trace_id/span_id into Fastify's
+        // pino logs and forwards them to the LogRecordProcessor above.
       }),
     ],
   });

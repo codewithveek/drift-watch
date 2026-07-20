@@ -1,6 +1,6 @@
 {
   "name": "@driftwatch/server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Reference Fastify server for DriftWatch. Demo skills (tools), the bring-your-own model-client wiring point, and the HTTP surface. Imports @driftwatch/sdk for everything reusable.",
   "author": "Victory Lucky",
@@ -10,8 +10,8 @@
   },
   "scripts": {
     "start": "node --import ./dist/telemetry-bootstrap.js ./dist/server.js",
-    "dev": "tsx --import ./src/telemetry-bootstrap.ts ./src/server.ts",
-    "build": "tsc",
+  "dev": "tsx watch --include .env --clear-screen=false --import ./src/telemetry-bootstrap.ts ./src/server.ts",
+ "build": "tsc",
     "typecheck": "tsc --noEmit",
     "drift": "tsx ./src/cli/drift.ts",
     "drift:dry-run": "cross-env DRIFT_DRY_RUN=1 tsx ./src/cli/drift.ts",
