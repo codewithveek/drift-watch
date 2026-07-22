@@ -171,32 +171,88 @@ async function queryWindowStats(options: {
   return parseWindowStats(windowLabel, signozResponseBody);
 }
 
-function buildToolCallCountsQuery(): Record<string, unknown> {
+/**
+ * SigNoz v4's metrics builder splits aggregation into two stages that the
+ * older single `aggregateOperator` did not express, and sending the v3 shape
+ * to /api/v4/query_range 500s with "error in builder queries":
+ *   - timeAggregation:  how samples in ONE series collapse over the step
+ *                       (our counters are exported DELTA, so summing deltas
+ *                       within the window yields "activity during the window"
+ *                       — see telemetry/otel.ts for why DELTA).
+ *   - spaceAggregation: how the resulting series combine across label sets.
+ * The exporter's DELTA temporality must be echoed back as `temporality:
+ * 'Delta'` or the query silently matches nothing. `type` must name the
+ * instrument kind (Sum for counters, Histogram for the latency metric) —
+ * percentiles are only defined over Histograms, so p95 lives in
+ * spaceAggregation there.
+ */
+function buildMetricBuilderQuery(options: {
+  metricKey: string;
+  instrumentType: 'Sum' | 'Histogram';
+  timeAggregation: string;
+  spaceAggregation: string;
+  expression: string;
+  groupBy?: Array<{ key: string; dataType: string; type: string }>;
+}): Record<string, unknown> {
   return {
     dataSource: 'metrics',
-    aggregateAttribute: { key: 'agent.tool.calls', dataType: 'float64' },
-    aggregateOperator: 'sum',
-    groupBy: [{ key: 'tool' }, { key: 'outcome' }],
-    expression: 'A',
+    aggregateAttribute: {
+      key: options.metricKey,
+      dataType: 'float64',
+      type: options.instrumentType,
+      isColumn: true,
+    },
+    temporality: 'Delta',
+    timeAggregation: options.timeAggregation,
+    spaceAggregation: options.spaceAggregation,
+    functions: [],
+    filters: { op: 'AND', items: [] },
+    groupBy: options.groupBy ?? [],
+    expression: options.expression,
+    disabled: false,
+    stepInterval: 60,
+    reduceTo: 'sum',
   };
+}
+
+function buildToolCallCountsQuery(): Record<string, unknown> {
+  return buildMetricBuilderQuery({
+    metricKey: 'agent.tool.calls',
+    instrumentType: 'Sum',
+    timeAggregation: 'sum',
+    spaceAggregation: 'sum',
+    expression: 'A',
+    groupBy: [
+      { key: 'tool', dataType: 'string', type: 'tag' },
+      { key: 'outcome', dataType: 'string', type: 'tag' },
+    ],
+  });
 }
 
 function buildToolLatencyQuery(): Record<string, unknown> {
-  return {
-    dataSource: 'metrics',
-    aggregateAttribute: { key: 'agent.tool.duration', dataType: 'float64' },
-    aggregateOperator: 'p95',
+  return buildMetricBuilderQuery({
+    // SigNoz ingests an OTLP explicit-bucket histogram as several Prometheus-
+    // style series (`.bucket`, `.count`, `.sum`, `.min`, `.max`) — the base
+    // name `agent.tool.duration` is NOT itself queryable. Percentiles read the
+    // cumulative `.bucket` series, so that is the key we aggregate over.
+    metricKey: 'agent.tool.duration.bucket',
+    instrumentType: 'Histogram',
+    // Percentiles are computed across the histogram buckets (spaceAggregation);
+    // there is no per-series time collapse to apply first.
+    timeAggregation: '',
+    spaceAggregation: 'p95',
     expression: 'B',
-  };
+  });
 }
 
 function buildTokenSpendQuery(): Record<string, unknown> {
-  return {
-    dataSource: 'metrics',
-    aggregateAttribute: { key: 'agent.tokens', dataType: 'float64' },
-    aggregateOperator: 'sum',
+  return buildMetricBuilderQuery({
+    metricKey: 'agent.tokens',
+    instrumentType: 'Sum',
+    timeAggregation: 'sum',
+    spaceAggregation: 'sum',
     expression: 'C',
-  };
+  });
 }
 
 async function querySignozRange(options: {
@@ -208,6 +264,18 @@ async function querySignozRange(options: {
   const { driftDetectionConfig, startTimeMs, endTimeMs, builderQueries } =
     options;
 
+  // SigNoz v4 requires every builder query to carry a `queryName` that matches
+  // its key in the `builderQueries` map (omitting it 400s with "query name is
+  // required"). Stamp it from the key here so the individual build* helpers
+  // don't have to repeat their own letter, and so it always matches the
+  // `result.queryName` the response parser keys off of.
+  const namedBuilderQueries = Object.fromEntries(
+    Object.entries(builderQueries).map(([queryName, query]) => [
+      queryName,
+      { ...(query as Record<string, unknown>), queryName },
+    ]),
+  );
+
   const requestBody = {
     start: startTimeMs,
     end: endTimeMs,
@@ -215,7 +283,7 @@ async function querySignozRange(options: {
     compositeQuery: {
       queryType: 'builder',
       panelType: 'table',
-      builderQueries,
+      builderQueries: namedBuilderQueries,
     },
   };
 

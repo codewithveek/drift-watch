@@ -14,16 +14,35 @@
  * Registered automatically by bootstrapTelemetry(); exported for consumers
  * who want to wire telemetry up manually instead.
  */
-import { trace, metrics, SpanStatusCode, type Span } from '@opentelemetry/api';
+import {
+  trace,
+  metrics,
+  SpanStatusCode,
+  type Counter,
+  type Span,
+} from '@opentelemetry/api';
 import type { Telemetry } from 'ai';
 
 const tracer = trace.getTracer('driftwatch.ai-sdk');
-const meter = metrics.getMeter('driftwatch.ai-sdk');
 
-const tokenUsageCounter = meter.createCounter('agent.tokens', {
-  description:
-    'Token usage per model/provider/task, split by input/output',
-});
+/**
+ * Lazily created — see the long note in instrument.ts. This module is loaded
+ * (via the barrel) before `sdk.start()` registers the MeterProvider, so a
+ * counter created at module load would bind to the NoopMeter and silently drop
+ * every token count. Creating it on first use (inside onLanguageModelCallEnd,
+ * which fires during a request) binds it to the real provider instead.
+ */
+let cachedTokenUsageCounter: Counter | undefined;
+function getTokenUsageCounter(): Counter {
+  if (!cachedTokenUsageCounter) {
+    cachedTokenUsageCounter = metrics
+      .getMeter('driftwatch.ai-sdk')
+      .createCounter('agent.tokens', {
+        description: 'Token usage per model/provider/task, split by input/output',
+      });
+  }
+  return cachedTokenUsageCounter;
+}
 
 interface ModelStepEvent {
   functionId?: string;
@@ -63,7 +82,7 @@ export class AiSdkOtelIntegration implements Telemetry {
   onLanguageModelCallEnd = (
     languageModelCallEndEvent: ModelStepEvent,
   ): void => {
-    recordTokenUsage(languageModelCallEndEvent, tokenUsageCounter);
+    recordTokenUsage(languageModelCallEndEvent, getTokenUsageCounter());
   };
 
   onStepEnd = (stepEndEvent: ModelStepEvent): void => {
@@ -78,7 +97,7 @@ export class AiSdkOtelIntegration implements Telemetry {
 
 function recordTokenUsage(
   modelStepEvent: ModelStepEvent,
-  counter: ReturnType<typeof meter.createCounter>,
+  counter: Counter,
 ): void {
   const modelIdentifier = modelStepEvent.model?.modelId ?? 'unknown';
   const providerName = modelStepEvent.model?.provider ?? 'unknown';
