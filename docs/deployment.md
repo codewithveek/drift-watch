@@ -1,163 +1,116 @@
 # Deployment
 
-## Docker
+DriftWatch deploys as a single container that serves the API **and** the
+console. Docker is the primary path; the compose file adds Redis for shared
+state in one command.
 
-Build context is the **workspace root**, not `packages/server/` — the
-Dockerfile uses `pnpm deploy` to pull `@driftwatch/sdk` in as real files
-instead of a workspace symlink, so the runtime image doesn't need the whole
-monorepo:
+## Docker (single container)
+
+Build from the workspace root (the Dockerfile pulls the SDK in as real files, so
+the runtime image doesn't need the monorepo):
 
 ```bash
-docker build -f packages/server/Dockerfile -t driftwatch-server .
-docker run --rm -p 3000:3000 --env-file packages/server/.env driftwatch-server
+docker build -f packages/server/Dockerfile -t driftwatch .
+docker run --rm -p 3000:3000 --env-file packages/server/.env driftwatch
 ```
 
-If you edited `packages/server/src/config/model-client.ts` to use a
-provider package other than the bundled `@ai-sdk/openai` (Qwen Cloud)
-default, run `pnpm --filter @driftwatch/server add @ai-sdk/<provider>` first
-so it lands in the lockfile before building — the Dockerfile installs with
-`--frozen-lockfile`.
+The image is production-ready out of the box:
 
-What the image already does for you (see
-[`packages/server/Dockerfile`](../packages/server/Dockerfile)):
+- Multi-stage build — the build toolchain never ships in the runtime image.
+- Runs as a non-root user.
+- `HEALTHCHECK` polls `/health` every 30s.
+- Bundles the console (served at `/console/`).
+- Starts telemetry before the app loads, so instrumentation catches everything.
 
-- Multi-stage build — the `node_modules`/build toolchain never ships in the
-  runtime image.
-- Runs as a non-root `app` user (`addgroup`/`adduser`), not root.
-- `HEALTHCHECK` hits `/health` every 30s.
-- `node --import ./dist/telemetry-bootstrap.js ./dist/server.js` — telemetry
-  bootstraps (and OTel auto-instrumentation patches Fastify/http) before the
-  server module itself is required. Don't change this to a plain `node
-  ./dist/server.js`; instrumentation would miss everything imported before
-  it.
+Publish it to any registry and run it anywhere that runs containers (ECS, Cloud
+Run, Fly, Kubernetes, a plain VM).
 
-## docker-compose (standalone — Coolify, Railway, plain `docker compose up`)
+> If you changed the model client to a provider package other than the default,
+> add it to the lockfile first (`pnpm --filter @driftwatch/server add
+> @ai-sdk/<provider>`) — the build installs with `--frozen-lockfile`.
 
-[`docker-compose.yml`](../docker-compose.yml) at the repo root brings up
-**DriftWatch + Redis** with no other services required — this is the file
-platforms that auto-deploy a repo's `docker-compose.yml` (Coolify, Railway,
-...) will pick up:
+## docker-compose (the standard path)
+
+The root [`docker-compose.yml`](../docker-compose.yml) brings up **DriftWatch +
+Redis** with no other services required — this is what auto-deploy platforms
+(Coolify, Railway, etc.) pick up automatically:
 
 ```bash
 docker compose up -d --build
 ```
 
-It wires `REDIS_URL=redis://redis:6379` into the DriftWatch container so
-autopilot state is shared and multi-process-safe out of the box. Autopilot
-itself ships **disabled** (`AUTOPILOT_ENABLED=0`); flip it on (and set
-channel secrets) via env vars when you're ready. OpenTelemetry export is
-optional — `OTEL_EXPORTER_OTLP_ENDPOINT` / `SIGNOZ_URL` default to
-`localhost`, which is unreachable inside the container and simply means the
-exporter logs failures instead of sending anywhere; the server still runs
-fine. Point those at a collector/query-service you already run elsewhere if
-you have one.
+It wires `REDIS_URL` into the container so Autopilot state is shared and
+multi-process-safe from the start. Set your secrets (`QWEN_API_KEY`,
+`AUTH_TOKEN`, and any telemetry/channel vars) as environment variables — the
+compose file substitutes them at deploy time; on a PaaS, set them in that
+platform's environment UI.
 
-On Coolify specifically: pick "Docker Compose" as the build pack, point it
-at this repo, and it'll find `docker-compose.yml` automatically. Set
-`QWEN_API_KEY` (and any of the other env vars referenced in the compose
-file) in Coolify's environment variables UI — they're substituted into the
-compose file at deploy time.
+Telemetry export is optional here: left at their `localhost` defaults the OTLP
+endpoint and `SIGNOZ_URL` are unreachable inside the container, so the exporter
+just logs failures and the server runs normally. Point them at a real
+collector/query service ([signoz.md](./signoz.md)) when you're ready.
 
-## docker-compose with SigNoz (optional, not the default file)
+## Running alongside self-hosted SigNoz
 
-[`docker-compose.signoz.yml`](../docker-compose.signoz.yml) is a *separate*
-recipe meant to be merged into (or dropped alongside) SigNoz's own self-host
-compose file, so DriftWatch runs on the same Docker network as the SigNoz
-OTel collector — it depends on services (`otel-collector`, `query-service`)
-that only exist once merged that way. Deploying this file by itself (e.g.
-pointing a PaaS at it directly) fails with "service depends on undefined
-service otel-collector"; use the standalone `docker-compose.yml` above
-unless you're specifically doing this merge:
+To run DriftWatch on the **same Docker network** as a self-hosted SigNoz — so it
+can reach the collector and query service by name — use
+[`docker-compose.signoz.yml`](../docker-compose.signoz.yml). It's meant to be
+merged with SigNoz's own compose file (it references SigNoz's `otel-collector`
+and `query-service` services, which only exist once merged):
 
 ```bash
-git clone https://github.com/SigNoz/signoz
-cd signoz/deploy/docker
-docker compose up -d           # brings up SigNoz (UI on :8080)
-docker compose -f docker-compose.yaml -f /path/to/drift-watch/docker-compose.signoz.yml up -d
+git clone https://github.com/SigNoz/signoz && cd signoz/deploy/docker
+docker compose up -d                                  # SigNoz, UI on :8080
+docker compose -f docker-compose.yaml \
+  -f /path/to/drift-watch/docker-compose.signoz.yml up -d
 ```
 
-Adjust the `build.context` path in that file to wherever you cloned
-DriftWatch. Inside that network, `OTEL_EXPORTER_OTLP_ENDPOINT` and
-`SIGNOZ_URL` point at the collector/query-service's *service names*
-(`otel-collector`, `query-service`), not `localhost` — the file already sets
-this up, and it brings up its own Redis service the same way the standalone
-file does.
+Inside that network, `OTEL_EXPORTER_OTLP_ENDPOINT` and `SIGNOZ_URL` use the
+service names, not `localhost` — the file sets this up and brings up its own
+Redis. (Deploying this file *by itself* fails with "undefined service
+otel-collector"; for standalone deploys use the plain `docker-compose.yml`.)
 
-## Enabling Autopilot
+## Shared state with Redis
 
-Autopilot (the drift→remediation loop) is off by default and starts in the
-safe `shadow` mode when enabled. A sensible rollout:
+Set `REDIS_URL` for any deployment running **more than one process**. It holds
+pending approvals, agent state, drift history, and the Autopilot leader lock, so
+that:
 
-1. **Shadow first.** `AUTOPILOT_ENABLED=1 AUTOPILOT_MODE=shadow` — the loop
-   runs, evaluates policies, and writes intended actions to the audit log, but
-   executes nothing and sends no messages. Watch `/actions/log` (or the
-   console) for a cycle or two to confirm the policy does what you expect.
-2. **Wire channels.** Set `SLACK_WEBHOOK_URL` + `SLACK_SIGNING_SECRET` and/or
-   `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` + `TELEGRAM_SECRET_TOKEN`, and
-   register the webhook URLs with each provider (Slack: Interactivity request
-   URL → `/integrations/slack/actions`; Telegram: `setWebhook` with your
-   secret token → `/integrations/telegram/webhook`).
-3. **Enforce.** `AUTOPILOT_MODE=enforce` — notifications fire and control
-   actions create approvals that a human resolves from any channel.
-4. **Set `REDIS_URL`** for any deployment running more than one process, so
-   the leader lock ensures exactly one process runs each drift cycle and all
-   processes share approvals/state. Without it you get a single-process
-   in-memory store (fine for a single container / local demo).
+- all processes see the same approvals and can resolve them, and
+- a `SET NX PX` leader lock ensures exactly one process runs each drift cycle.
 
-The console is served from the server at `/console/` when
-`packages/console/dist` exists. The Docker build handles this for you — the
-build stage also runs `pnpm --filter @driftwatch/console build` and the
-runtime image copies its `dist` alongside the deployed server, so
-`docker build -f packages/server/Dockerfile -t driftwatch-server .` gives you
-both in one image. Open `/console/` with your `AUTH_TOKEN`. For non-Docker
-deployments, build the console yourself with
-`pnpm --filter @driftwatch/console build` before starting the server.
+Without it you get an in-memory single-process store — fine for one container or
+local dev, wrong for a horizontally scaled deployment. Put Redis on a private
+network; use `rediss://` + auth if it leaves the host.
 
 ## Production checklist
 
-- **Set `AUTH_TOKEN`.** Without it, the server only accepts traffic from
-  RFC 1918 private ranges — fine for local dev, not for anything with a
-  public ingress. See [security.md](./security.md#authentication).
-- **Set `TRUST_PROXY=1`** if you're behind a reverse proxy or load
-  balancer, so `request.ip` reflects the real client instead of the proxy —
-  this also matters for the local-network auth fallback and for rate
-  limiting being keyed correctly.
-- **Tune `RATE_LIMIT_MAX`/`RATE_LIMIT_WINDOW_MS`** to whatever request
-  volume you actually expect; the defaults (30/min) are conservative.
-- **Decide on `OTEL_CAPTURE_PAYLOADS`.** If prompts or tool inputs might
-  carry customer PII, set it to `0` before your tracing backend becomes a
-  second place that data lives.
-- **Point `OTEL_EXPORTER_OTLP_ENDPOINT` and `SIGNOZ_URL` at your real
-  collector/query-service**, not `localhost` defaults.
-- **Cap `AGENT_MAX_STEPS`** to bound per-request cost — this is your hard
-  ceiling on how many tool-use/LLM round trips a single `/run` call can
-  spend.
-- **Set the inline guardrails** (`AGENT_MAX_TOKENS_PER_TASK` / `AGENT_MAX_COST_USD`)
-  for a synchronous, per-request abort that fires before a runaway call can
-  even reach the drift windows.
-- **If Autopilot is enabled**, run `shadow` mode until you trust the policy,
-  set `REDIS_URL` for multi-process deployments, and keep
-  `AUTOPILOT_APPROVAL_TIMEOUT_DECISION=rejected` (the safe default) so a
-  missed approval fails closed.
-- **Graceful shutdown is already handled** — `SIGTERM`/`SIGINT` drain
-  in-flight Fastify requests before flushing OTel and exiting (see
-  [`server.ts`](../packages/server/src/server.ts)), so a rolling deploy or
-  autoscaler-driven termination won't cut off in-flight `/run` calls or
+- **Set `AUTH_TOKEN`.** Without it the server only accepts private-network
+  traffic — fine for dev, not for a public ingress.
+  ([security.md](./security.md#authentication))
+- **Set `TRUST_PROXY=1`** behind a reverse proxy or load balancer, so client IP,
+  the local-network auth fallback, and rate limiting key on the real client.
+- **Point telemetry at your real backend** — `OTEL_EXPORTER_OTLP_ENDPOINT` /
+  `OTEL_EXPORTER_OTLP_HEADERS` for push, `SIGNOZ_URL` / `SIGNOZ_API_KEY` for the
+  drift detector's pull. ([signoz.md](./signoz.md))
+- **Decide on `OTEL_CAPTURE_PAYLOADS`.** Set it to `0` if prompts or tool inputs
+  might carry PII before your tracing backend becomes a second place that data
+  lives. ([security.md](./security.md#telemetry-payload-capture))
+- **Bound cost.** Cap `AGENT_MAX_STEPS`, and set the inline guardrails
+  (`AGENT_MAX_TOKENS_PER_TASK` / `AGENT_MAX_COST_USD`) for a hard per-request
+  abort. Tune `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS` for your traffic.
+- **If Autopilot is on**, roll out in `shadow` mode first, set `REDIS_URL` for
+  multi-process, and keep `AUTOPILOT_APPROVAL_TIMEOUT_DECISION=rejected` so a
+  missed approval fails closed. ([alerts-and-actions.md](./alerts-and-actions.md))
+- **Graceful shutdown is handled** — `SIGTERM`/`SIGINT` drain in-flight requests
+  before flushing telemetry, so rolling deploys don't cut off `/run` calls or
   drop the last batch of spans.
-- **`/health` is unauthenticated by design** (for load balancer / container
-  orchestrator health checks) — it returns `{ ok: true }` and nothing else,
-  no information disclosure beyond liveness.
+- **`/health` is unauthenticated by design** — liveness only, no information
+  disclosure, for load balancers and orchestrators.
 
-## Publishing `@driftwatch/sdk`
+## Configuration
 
-The SDK package (`packages/sdk`) is structured to be publishable
-standalone — `files: ["dist"]`, a package-local README, `publishConfig:
-{"access": "public"}` for the scoped name. It is **not yet published to
-npm**, but `@driftwatch/sdk`/`driftwatch` are confirmed available (unlike
-the earlier `@agentpulse/*` working name, which collided with an existing
-package). Before running `npm publish` for real:
-
-1. Create/claim the `driftwatch` npm org so the `@driftwatch` scope
-   resolves to you.
-2. Bump the version and fill in `packages/sdk/CHANGELOG.md`.
-3. `pnpm --filter @driftwatch/sdk build && pnpm --filter @driftwatch/sdk publish`.
+Every environment variable, with defaults, is in
+[configuration.md](./configuration.md). The shipped
+[`.env.example`](../packages/server/.env.example) has them all with inline
+comments, ready to copy.

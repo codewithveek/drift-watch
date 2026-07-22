@@ -108,7 +108,7 @@ The drift-triggered remediation loop and its channels. All server-owned.
 
 Approvals are **channel-agnostic** — the same pending approval can be resolved
 from the console, a Slack button, or a Telegram button, because all three
-mutate the one shared store. See [architecture.md](./architecture.md#the-autopilot-loop-loop-2)
+mutate the one shared store. See [alerts-and-actions.md](./alerts-and-actions.md)
 and [security.md](./security.md#integration-webhook-authentication).
 
 | Env var | Field | Notes |
@@ -157,9 +157,9 @@ const qwenCloud = createOpenAI({
 });
 export const modelClient = qwenCloud(process.env.MODEL ?? 'qwen3.7-max');
 ```
-```bash
-QWEN_API_KEY=... MODEL=qwen3.7-max pnpm dev
-```
+
+Set `QWEN_API_KEY` (and optionally `MODEL`) in your `.env`. To use a different
+provider, see [server.md → Model client](./server.md#the-model-client).
 
 | Env var | Default | Notes |
 |---|---|---|

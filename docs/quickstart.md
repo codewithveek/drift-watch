@@ -1,130 +1,170 @@
 # Quickstart
 
-Gets you from a clone to a drift report. Five steps.
+Get DriftWatch running and produce your first drift report. The fastest path
+is Docker — no build step, one container.
 
-## 1. Bring up SigNoz
+> Working on the code itself (adding tools, changing the model wiring, running
+> tests)? Skip to [Running from source](#running-from-source).
 
-DriftWatch's traces and metrics go to any OTLP/HTTP collector; the drift
-detector queries a SigNoz-shaped query API specifically. Self-hosted SigNoz
-is the fastest way to get both:
+## 1. Configure
 
-```bash
-git clone https://github.com/SigNoz/signoz && cd signoz/deploy/docker
-docker compose up -d   # UI on :8080
-```
-
-You don't strictly need this to try the server — see step 4's dry-run mode
-— but you won't see real traces without it.
-
-## 2. Install dependencies
+Clone the repo (you build the image from it) and create your `.env` from the
+template:
 
 ```bash
-git clone https://github.com/codewithveek/drift-watch.git driftwatch
-cd driftwatch
-pnpm install
-```
-
-Requires Node ≥22 and pnpm ≥9.
-
-## 3. Configure a model client and run the server
-
-```bash
+git clone https://github.com/codewithveek/drift-watch.git && cd drift-watch
 cp packages/server/.env.example packages/server/.env
 ```
 
-Edit `packages/server/.env` and fill in `QWEN_API_KEY` — this deployment
-targets **Qwen Cloud**'s OpenAI-compatible endpoint via `@ai-sdk/openai`
-(already a dependency). `QWEN_BASE_URL` and `MODEL` (default `qwen3.7-max`)
-have sensible defaults.
+DriftWatch needs one thing to do useful work: a model provider key. Everything
+else has a safe default. Open `packages/server/.env` and set:
+
+- `QWEN_API_KEY` — your model key. The default deployment targets **Qwen Cloud**
+  (an OpenAI-compatible endpoint). To use Anthropic, OpenAI, Google, or a local
+  model instead, see [server.md → Model client](./server.md#the-model-client).
+- `AUTH_TOKEN` — a secret of your choosing. Clients must send it as
+  `Authorization: Bearer <token>`. Leave it empty only for local experiments —
+  see [security.md](./security.md#authentication).
+
+To send telemetry to SigNoz now, also set `OTEL_EXPORTER_OTLP_ENDPOINT`,
+`OTEL_EXPORTER_OTLP_HEADERS`, `SIGNOZ_URL`, and `SIGNOZ_API_KEY` — the
+[SigNoz guide](./signoz.md) walks through exactly where each value comes from.
+You can skip this for now and still try everything below via dry-run mode.
+
+## 2. Run
+
+From a clone of the repo (the build context is the repo root):
 
 ```bash
-pnpm dev
+docker build -f packages/server/Dockerfile -t driftwatch .
+docker run --rm -p 3000:3000 --env-file packages/server/.env driftwatch
 ```
 
-Want a different provider instead (Anthropic, OpenAI, Google, or any
-OpenAI-compatible endpoint like Ollama/vLLM/Together/Groq)? Edit the one
-file: `packages/server/src/config/model-client.ts`. See
-[configuration.md](./configuration.md#model-client) for the exact swap.
-
-The server refuses to start with no `modelClient` configured — there's no
-silent fallback.
-
-## 4. Drive traffic
+The image bundles the server **and** the operator console. When it's up:
 
 ```bash
-curl -XPOST localhost:3000/run -H 'content-type: application/json' \
+curl localhost:3000/health          # → {"ok":true}
+```
+
+For a full stack (DriftWatch + Redis for shared state) in one command, use the
+compose file — see [deployment.md](./deployment.md#docker-compose-the-standard-path).
+
+## 3. Drive traffic
+
+Send the agent a task. Each `/run` call executes a tool-use loop and returns
+exactly what happened — no tracing backend required to see the result:
+
+```bash
+curl -XPOST localhost:3000/run \
+  -H "authorization: Bearer $AUTH_TOKEN" \
+  -H 'content-type: application/json' \
   -d '{"prompt":"weather in Lagos, then search docs for onboarding"}'
 ```
-
-Or seed a batch of 40 mixed requests (the seed script deliberately shifts
-tool-call mix partway through, so the drift detector has something real to
-catch):
-
-```bash
-BASE_URL=http://localhost:3000 pnpm seed 40
-```
-
-Each `/run` response includes token usage, step count, and which skills
-(tools) were called — no trip to a tracing backend required:
 
 ```jsonc
 {
   "output": "It's 24°C in Lagos. Found 3 onboarding docs.",
   "usage": {
-    "taskId": "b3f1...e2",
+    "taskId": "b3f1…e2",
     "stepCount": 3,
     "skillsUsed": ["get_weather", "search_docs"],
     "tokenUsage": { "inputTokens": 812, "outputTokens": 96, "totalTokens": 908 },
-    "providerName": "anthropic",
-    "modelIdentifier": "claude-3-5-sonnet-latest"
+    "providerName": "openai.responses",
+    "modelIdentifier": "qwen3.5-plus"
   }
 }
 ```
 
-## 5. Get a drift report
+**What you get:** the task's id, how many steps it took, which tools it called,
+and the exact token spend — per request, in the response body. The same data is
+also emitted as OpenTelemetry traces and metrics for the drift detector and for
+SigNoz.
+
+To generate enough signal for a meaningful drift report, send a batch. The seed
+script deliberately shifts the tool-call mix partway through, so there's a real
+change to detect:
 
 ```bash
-# against real SigNoz data (needs step 4's traffic + a live SigNoz):
-curl localhost:3000/drift
-
-# without SigNoz, using built-in fixtures — great for demos + CI:
-pnpm drift:dry-run
+# from a repo clone
+BASE_URL=http://localhost:3000 AUTH_TOKEN=$AUTH_TOKEN pnpm seed 40
 ```
 
-The dry-run fixtures simulate a baseline window and a "current" window
-where tool-call mix, error rate, latency, and token spend have all shifted
-— enough for the LLM judge to flag drift without any infrastructure.
+## 4. Get a drift report
 
-## Local-only by default
-
-If you skip setting `AUTH_TOKEN` in `.env`, the server works fine on
-localhost but refuses requests from outside your private network — see
-[security.md](./security.md) before exposing this anywhere real.
-
-## Try the autopilot loop
-
-Run the full perceive→reason→act loop safely against fixtures — it evaluates
-policies and logs the actions it *would* take, without executing any or
-sending any messages:
+The drift detector queries two time windows (baseline vs. current), diffs the
+agent's behavior, and asks the model to classify whether it has drifted enough
+to warrant a human alert:
 
 ```bash
-AUTOPILOT_ENABLED=1 AUTOPILOT_MODE=shadow DRIFT_DRY_RUN=1 pnpm dev
+curl localhost:3000/drift -H "authorization: Bearer $AUTH_TOKEN"
 ```
 
-Then open the operator console (approvals queue, drift feed, action log):
+```jsonc
+{
+  "currentWindowStats": {
+    "totalCalls": 28,
+    "errorRate": 0,
+    "toolMix": { "get_weather": 0.71, "search_docs": 0.29 },
+    "p95LatencyMs": 210,
+    "tokenSpend": 26903
+  },
+  "verdict": {
+    "drift": true,
+    "severity": "medium",
+    "reasons": ["search_docs share 40% → 75%", "token spend 12k → 27k"],
+    "recommended_action": "Investigate the search_docs regression."
+  }
+}
+```
+
+**No SigNoz yet?** Use the built-in fixtures — a baseline and a shifted
+"current" window — to see the full detection + verdict path with zero
+infrastructure:
 
 ```bash
-pnpm --filter @driftwatch/console dev   # dev server with API proxy + hot reload
-# or in production it's served from the server at http://localhost:3000/console/
+curl 'localhost:3000/drift' -H "authorization: Bearer $AUTH_TOKEN"   # with DRIFT_DRY_RUN=1 in .env
 ```
 
-Paste your `AUTH_TOKEN` into the console's token field. See
-[architecture.md](./architecture.md#the-autopilot-loop-loop-2) for how the loop
-works and [configuration.md](./configuration.md#autopilot--serverconfig-loop-2)
-for enabling Slack/Telegram approvals and Redis-backed multi-process state.
+## 5. See it in SigNoz
+
+Once telemetry is flowing, open your SigNoz **Services** tab and click
+`driftwatch` to see request rate, latency, and errors; open **Traces** to
+inspect a single task's full decision chain by `agent.task_id`. The
+[SigNoz guide](./signoz.md) shows exactly what to look at and the queries that
+power drift detection.
+
+## 6. Turn on alerts and autopilot (optional)
+
+DriftWatch can act on drift — notify Slack/Telegram, or pause/rollback the agent
+with a human approving from any channel. It ships **off** and, when enabled,
+starts in a safe shadow mode that logs intended actions without taking them.
+See [alerts-and-actions.md](./alerts-and-actions.md).
+
+---
+
+## Running from source
+
+For contributors, or anyone customizing tools / the model client / policies.
+Requires **Node ≥ 22** and **pnpm ≥ 9**.
+
+```bash
+git clone https://github.com/codewithveek/drift-watch.git driftwatch
+cd driftwatch
+pnpm install
+cp packages/server/.env.example packages/server/.env   # then edit it
+pnpm dev                                                # server + console, hot reload
+```
+
+- `pnpm dev` runs the server (`:3000`) and the console dev server together.
+- `pnpm --filter @driftwatch/server test` runs the test suite.
+- `pnpm drift:dry-run` prints a fixture-backed drift report without a running
+  server — handy in CI.
 
 ## What's next
 
-- [configuration.md](./configuration.md) — every setting, env var by env var.
-- [architecture.md](./architecture.md) — what's actually being traced and why.
-- [deployment.md](./deployment.md) — Docker + docker-compose with SigNoz.
+- [server.md](./server.md) — the HTTP surface, model client, and your own tools.
+- [signoz.md](./signoz.md) — connect SigNoz (self-hosted or Cloud) and read the data.
+- [alerts-and-actions.md](./alerts-and-actions.md) — policies, channels, approvals.
+- [console.md](./console.md) — the operator console.
+- [configuration.md](./configuration.md) — every environment variable.
+- [deployment.md](./deployment.md) — production Docker, compose, and the checklist.

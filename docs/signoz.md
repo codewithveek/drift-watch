@@ -1,0 +1,162 @@
+# SigNoz & OpenTelemetry
+
+DriftWatch instruments every agent decision as OpenTelemetry — traces, metrics,
+and logs. It exports over standard **OTLP/HTTP**, so any OTel-compatible backend
+can receive it. [SigNoz](https://signoz.io) is the recommended one: the drift
+detector reads its data back out through SigNoz's query API to compute drift, so
+SigNoz is both your dashboard *and* part of the control loop.
+
+This guide connects DriftWatch to SigNoz and shows what to look at once data
+flows.
+
+## Two endpoints, two credentials
+
+This is the one thing to get right. DriftWatch talks to SigNoz in **two
+directions**, and they use different hosts and different keys. Mixing them up is
+the most common reason "nothing shows up."
+
+| Direction | What | Env vars |
+|---|---|---|
+| **Push** telemetry in | Traces/metrics/logs → SigNoz's OTLP collector | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS` |
+| **Pull** data back out | Drift detector queries the SigNoz query API | `SIGNOZ_URL`, `SIGNOZ_API_KEY` |
+
+The **ingestion key** (push) and the **API key** (pull) are two different
+credentials. Don't reuse one for the other.
+
+## Connecting to SigNoz Cloud
+
+1. **Ingestion (push).** In SigNoz Cloud → **Settings → Ingestion Settings**,
+   copy your region's ingestion endpoint and ingestion key:
+
+   ```bash
+   OTEL_EXPORTER_OTLP_ENDPOINT=https://ingest.<region>.signoz.cloud:443
+   OTEL_EXPORTER_OTLP_HEADERS=signoz-ingestion-key=<your-ingestion-key>
+   ```
+
+   `<region>` is `us`, `eu`, or `in`.
+
+2. **Query API (pull).** In SigNoz Cloud → **Settings → API Keys** (create a
+   key with at least the **Viewer** role), and use your dashboard URL — the one
+   in your browser's address bar when viewing SigNoz — as the base:
+
+   ```bash
+   SIGNOZ_URL=https://<your-team>.<region>.signoz.cloud
+   SIGNOZ_API_KEY=<your-api-key>
+   ```
+
+   > `SIGNOZ_URL` is the **query/dashboard** host, *not* the `ingest.*` host.
+   > The ingest host has no query API; pointing `SIGNOZ_URL` at it will make
+   > `/drift` fail. If the query API returns `403 forbidden`, the key's service
+   > account is missing the Viewer role.
+
+## Connecting to self-hosted SigNoz
+
+Self-hosted SigNoz bundles the collector and query service, and needs no
+ingestion header:
+
+```bash
+git clone https://github.com/SigNoz/signoz && cd signoz/deploy/docker
+docker compose up -d          # UI + query service on :8080, OTLP collector on :4318
+```
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318     # collector (HTTP/proto)
+OTEL_EXPORTER_OTLP_HEADERS=                            # none for self-hosted
+SIGNOZ_URL=http://localhost:8080                       # query service / UI
+SIGNOZ_API_KEY=<key from Settings → API Keys>
+```
+
+Running DriftWatch as a container next to self-hosted SigNoz? Put them on the
+same Docker network and use service names instead of `localhost` — see
+[deployment.md](./deployment.md#running-alongside-self-hosted-signoz).
+
+## Verify it's flowing
+
+Send some traffic ([quickstart step 3](./quickstart.md#3-drive-traffic)),
+generate ~15–20 requests, wait 2–3 minutes, then in SigNoz:
+
+- **Services** tab → a service named **`driftwatch`** appears, with request
+  rate, p95/p99 latency, and error rate.
+- **Traces** tab → filter `service.name = driftwatch` to see individual `/run`
+  calls.
+
+If the service doesn't appear after a few minutes, it's almost always the
+endpoint/key: confirm the push endpoint is the `ingest.*` host with the
+ingestion key, not the query host.
+
+## What DriftWatch emits
+
+### Traces — the full decision chain
+
+Every `/run` opens one root span, `agent.run`, with child spans for each model
+step and tool call:
+
+```
+agent.run              task id, skills used, token spend, provider, model
+├─ gen_ai.step         one per LLM call — model, tokens, finish reason
+├─ tool.get_weather    tool latency + outcome (ok/error)
+└─ gen_ai.step
+```
+
+Open any `agent.run` span and read `agent.task_id` to pull that exact task's
+whole trace — every tool it invoked and every token it spent. This is your
+answer to "why did this one request behave this way?"
+
+### Metrics — aggregate behavior over time
+
+Three custom metrics drive drift detection and make good dashboard panels. They
+are **low-cardinality by design** (labels are bounded sets — tool name, outcome,
+provider, model — never a request or task id), so they chart cleanly over time.
+
+| Metric | Type | Labels | Answers |
+|---|---|---|---|
+| `agent.tool.calls` | counter | `tool`, `outcome` | how often each tool is called, split ok/error |
+| `agent.tool.duration` | histogram | `tool` | per-tool latency, incl. p95 regressions |
+| `agent.tokens` | counter | `model`, `provider`, `function_id`, `type` | token spend by provider/model/task-type (`agent-run` vs `drift-judge`), input vs output |
+
+Metrics export with **delta** temporality (SigNoz's recommendation) — each
+export carries the activity *since the last one*, so summing over a window gives
+"activity during that window," which is exactly what the drift detector needs.
+
+> **Histogram naming.** SigNoz stores an OTLP histogram as several series:
+> `agent.tool.duration.bucket`, `.count`, `.sum`, `.min`, `.max`. Percentiles
+> (p95) read the `.bucket` series; an average latency panel is
+> `.sum / .count`. The base name `agent.tool.duration` is not itself queryable.
+
+### Building dashboard panels
+
+In the SigNoz **Dashboards** → new panel → **Metrics** query builder:
+
+- **Calls per tool** — metric `agent.tool.calls`, aggregation *Sum*, group by
+  `tool`. Add `outcome` to split success vs error.
+- **Token spend by model** — metric `agent.tokens`, *Sum*, group by `model` (or
+  `function_id` to separate agent work from drift-judge cost).
+- **Tool latency p95** — metric `agent.tool.duration.bucket`, aggregation *p95*,
+  group by `tool`.
+
+These are the same signals `detectBehavioralDrift` reads — the dashboard shows
+you *what* changed; the drift verdict tells you *whether it matters*.
+
+## Other OpenTelemetry backends
+
+Because export is plain OTLP/HTTP, DriftWatch's **traces, metrics, and logs**
+work with any OTel backend — Grafana (Tempo/Mimir/Loki via the OTel Collector),
+Honeycomb, Datadog's OTLP intake, Jaeger (traces only), or a raw OpenTelemetry
+Collector you fan out from. Point `OTEL_EXPORTER_OTLP_ENDPOINT` (and any auth
+header via `OTEL_EXPORTER_OTLP_HEADERS`) at that backend and you'll get the full
+trace/metric/log experience there.
+
+The one SigNoz-specific piece is **drift detection**: `detectBehavioralDrift`
+speaks SigNoz's query API (`/api/v4/query_range`). With a different backend you
+still get all the telemetry and dashboards — you'd just point the drift
+detector at a SigNoz instance, or run it in dry-run mode, if you don't run
+SigNoz for querying.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Service never appears in SigNoz | Push endpoint is the query host, or ingestion key missing | Use `ingest.<region>.signoz.cloud:443` + `signoz-ingestion-key=…` |
+| Traces show up but no `agent.*` metrics | Metrics take a few minutes to become queryable | Wait 2–3 min after traffic; confirm on the Dashboards metric builder |
+| `/drift` returns `403 forbidden` | Query API key lacks a role | Give the key's service account the **Viewer** role in SigNoz |
+| `/drift` returns connection errors | `SIGNOZ_URL` points at the `ingest.*` host | Point it at your dashboard URL instead |

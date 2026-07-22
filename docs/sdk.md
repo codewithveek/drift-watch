@@ -1,0 +1,197 @@
+# The SDK — `@driftwatch/sdk`
+
+`@driftwatch/sdk` is the reusable core. If you already have an
+[AI SDK](https://ai-sdk.dev) agent, you can add DriftWatch's observability,
+drift detection, and guardrails to it **without** the reference server — the SDK
+is a library you call from your own code.
+
+It bundles no AI provider SDKs and reads no environment variables on its own:
+every function takes a model client, tools, and typed config as parameters. You
+stay in control of which provider you use and where config comes from.
+
+```bash
+npm install @driftwatch/sdk ai zod
+npm install @ai-sdk/openai   # or @ai-sdk/anthropic, @ai-sdk/google, …
+```
+
+## When to use the SDK directly
+
+- You have an existing AI SDK app and want **self-observing** telemetry
+  (traces + the `agent.*` metrics) with a couple of function calls.
+- You want **behavioral drift detection** over your agent's telemetry, run on
+  your own schedule (a cron, a queue worker, a serverless function).
+- You want **inline guardrails** — a hard per-request token/cost cap enforced
+  mid-loop — without adopting the whole server.
+- You're building a **different control surface** than the reference server and
+  just want the detection + policy primitives.
+
+If instead you want a ready-to-run HTTP service with alerts, approvals, and a
+console, use the [server](./server.md) — it's built on exactly these functions.
+
+## The four things it does
+
+### 1. Run an instrumented agent task
+
+`runAgentTask` is a traced `generateText` tool-use loop. Give it a model and
+tools; it returns the result plus a usage summary, and emits the `agent.run`
+trace and `agent.tool.*` metrics along the way.
+
+```ts
+import { runAgentTask, bootstrapTelemetry, loadDriftWatchConfigFromEnv } from '@driftwatch/sdk';
+import { createOpenAI } from '@ai-sdk/openai';
+import { tool } from 'ai';
+import { z } from 'zod';
+
+const config = loadDriftWatchConfigFromEnv();
+bootstrapTelemetry(config.telemetry);   // once, before other app code — see below
+
+const model = createOpenAI({ apiKey: process.env.OPENAI_API_KEY })('gpt-4o');
+
+const tools = {
+  lookup_order: tool({
+    description: 'Look up an order by id',
+    inputSchema: z.object({ orderId: z.string() }),
+    execute: async ({ orderId }) => ({ orderId, status: 'shipped' }),
+  }),
+};
+
+const result = await runAgentTask({
+  prompt: 'Where is order 4471?',
+  modelClient: model,
+  tools,
+  maxSteps: config.agent.maxSteps,
+});
+
+console.log(result.responseText);
+console.log(result.taskId, result.skillsUsed, result.tokenUsage);
+```
+
+**What you get back:** the response text, the task id (searchable in your
+tracing backend), which tools were called, step count, and exact token usage —
+per call, without a round trip to a backend.
+
+### 2. Instrument your own tools
+
+Wrap a tool's `execute` in `withSkillExecutionSpan` so every call produces a
+`tool.<name>` span and increments the `agent.tool.calls` / `agent.tool.duration`
+metrics — the signals drift detection reads. This is the pattern for turning
+*your* tools (DB lookups, HTTP calls, vector search) into observable skills:
+
+```ts
+import { withSkillExecutionSpan } from '@driftwatch/sdk';
+
+const search_docs = tool({
+  description: 'Search internal docs',
+  inputSchema: z.object({ query: z.string() }),
+  execute: (input) =>
+    withSkillExecutionSpan({
+      skillName: 'search_docs',
+      skillInput: input,
+      executeSkill: async () => myVectorSearch(input.query),
+    }),
+});
+```
+
+### 3. Detect behavioral drift
+
+`detectBehavioralDrift` queries two time windows from SigNoz, diffs the agent's
+behavior (tool mix, error rate, p95 latency, token spend), and asks your model
+to classify whether it drifted — returning a schema-typed verdict, not free
+text:
+
+```ts
+import { detectBehavioralDrift } from '@driftwatch/sdk';
+
+const report = await detectBehavioralDrift({
+  modelClient: model,
+  driftDetectionConfig: config.driftDetection,   // SigNoz URL + API key
+});
+
+console.log(report.verdict);
+// { drift: true, severity: 'medium',
+//   reasons: ['search_docs share 40% → 75%'],
+//   recommended_action: 'Investigate the search_docs regression.' }
+```
+
+Pass `isDryRun: true` to skip SigNoz and use built-in fixtures — a baseline and
+a shifted "current" window — so you can wire up and test the verdict path before
+any real traffic exists (demos, CI).
+
+The judge drives the model with `generateText` and parses its JSON defensively,
+retrying up to 3 times (surfaced as `report.judgeAttempts`), so it works even
+against providers whose structured-output support is unreliable.
+
+### 4. Enforce inline guardrails
+
+Pass `guardrails` to `runAgentTask` for a hard, synchronous per-request cap.
+Unlike drift detection (which is aggregate and after-the-fact), this aborts a
+single runaway call *mid-loop*, before it finishes:
+
+```ts
+const result = await runAgentTask({
+  prompt,
+  modelClient: model,
+  tools,
+  maxSteps: config.agent.maxSteps,
+  guardrails: {
+    maxTokensPerTask: 40_000,   // 0 disables
+    maxCostUsd: 0.50,           // 0 disables; derived from the prices below
+    pricePer1kInput: 0.005,
+    pricePer1kOutput: 0.015,
+    onExceed: 'stop',           // 'stop' halts mid-loop; 'flag' finishes and marks it
+  },
+});
+
+if (result.guardrailTriggered) {
+  console.warn('guardrail hit:', result.guardrailReason);
+}
+```
+
+## Bootstrapping telemetry correctly
+
+`bootstrapTelemetry` starts the OpenTelemetry SDK and registers the AI SDK
+telemetry bridge. It **must run before any other application code** so
+auto-instrumentation can patch modules (Fastify, http, pino) before they're
+imported. The standard way is a preload:
+
+```bash
+node --import ./telemetry-bootstrap.js ./app.js
+```
+
+```ts
+// telemetry-bootstrap.ts
+import 'dotenv/config';                        // load env BEFORE reading it
+import { bootstrapTelemetry, loadDriftWatchConfigFromEnv } from '@driftwatch/sdk';
+bootstrapTelemetry(loadDriftWatchConfigFromEnv().telemetry);
+```
+
+It exports traces, metrics, and logs over OTLP/HTTP. Metrics use **delta**
+temporality so the drift detector's windowed sums are correct, and logs carry
+`trace_id`/`span_id` for trace↔log correlation. See
+[signoz.md](./signoz.md#what-driftwatch-emits) for the signals it produces.
+
+> Calling `bootstrapTelemetry` from inside your normal import graph (after other
+> modules have loaded) means instruments bind before the provider is ready and
+> silently record nothing. Always run it first, via `--import`.
+
+## Configuration
+
+Every function takes typed config. `loadDriftWatchConfigFromEnv()` builds it
+from `process.env`; or construct and validate your own object against the same
+schema:
+
+```ts
+import { DriftWatchConfigSchema } from '@driftwatch/sdk';
+
+const config = DriftWatchConfigSchema.parse({
+  telemetry: { serviceName: 'checkout-agent', environment: 'production' },
+  agent: { maxSteps: 12, maxTokensPerTask: 40_000, onExceed: 'stop' },
+  driftDetection: { signozBaseUrl: 'https://signoz.internal' },
+});
+```
+
+Every field and its env var is documented in
+[configuration.md](./configuration.md#sdk-config--driftwatchconfig). Provider
+support (which models work) is covered in
+[server.md → Model client](./server.md#the-model-client) — the same rules apply
+to the SDK.
