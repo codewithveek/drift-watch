@@ -17,7 +17,7 @@
   "packageManager": "pnpm@9.15.0",
   "scripts": {
     "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm --filter @driftwatch/sdk build && pnpm -r typecheck",
     "test": "pnpm -r test",
     "dev": "pnpm --parallel --filter @driftwatch/server --filter @driftwatch/console dev",
     "dev:server": "pnpm --filter @driftwatch/server dev",
