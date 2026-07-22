@@ -14,7 +14,16 @@
  * `telemetrySdk` below, which server.ts reaches via a lazy `import()` at
  * shutdown time so this module's load order (and thus instrumentation
  * patching) is unaffected by anything server.ts does.
+ *
+ * dotenv MUST be loaded here, not just in server.ts: this preload runs (via
+ * `node --import`) BEFORE server.ts, so if the .env were only loaded there,
+ * `loadDriftWatchConfigFromEnv()` below would read an empty process.env and
+ * silently fall back to the schema defaults (OTLP endpoint localhost:4318, no
+ * ingestion key) — telemetry would never reach SigNoz. dotenv does not
+ * override already-set vars, so server.ts's own `import 'dotenv/config'` is a
+ * harmless no-op after this.
  */
+import 'dotenv/config';
 import { loadDriftWatchConfigFromEnv, bootstrapTelemetry } from '@driftwatch/sdk';
 
 const driftWatchConfig = loadDriftWatchConfigFromEnv();
