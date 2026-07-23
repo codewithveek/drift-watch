@@ -4,7 +4,7 @@
  * incident tooling, a serverless function, PagerDuty's events API, etc.
  */
 import type { NotificationMessage, Notifier } from '@driftwatch/sdk';
-import { postJson } from './http.js';
+import { postJson } from '../http.js';
 
 export class WebhookNotifier implements Notifier {
   readonly channel = 'webhook';

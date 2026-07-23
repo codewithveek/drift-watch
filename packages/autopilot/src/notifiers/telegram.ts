@@ -1,11 +1,11 @@
 /**
  * Telegram notifier. Sends a message via the Bot API, with an inline keyboard
  * carrying Approve/Reject buttons when an approvalId is present. Button taps
- * arrive as callback_query updates at POST /integrations/telegram/webhook
- * (see routes/integrations.ts) — so approvals work from Telegram on mobile.
+ * arrive as `callback_query` updates at your webhook route — parse them with
+ * `parseTelegramCallback` from `../verify/telegram.js`.
  */
 import type { NotificationMessage, Notifier } from '@driftwatch/sdk';
-import { postJson } from './http.js';
+import { postJson } from '../http.js';
 
 export const TELEGRAM_APPROVE_PREFIX = 'dw_approve:';
 export const TELEGRAM_REJECT_PREFIX = 'dw_reject:';

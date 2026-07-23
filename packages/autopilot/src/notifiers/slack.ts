@@ -1,12 +1,12 @@
 /**
  * Slack notifier. Posts a Block Kit message to an incoming webhook. When the
  * message carries an approvalId, it renders Approve/Reject buttons whose
- * clicks Slack delivers to POST /integrations/slack/actions (see
- * routes/integrations.ts) — so a control action can be approved from Slack,
- * including on mobile.
+ * clicks Slack delivers to your `/integrations/slack/actions`-style route —
+ * verify them with `verifySlackSignature` and parse them with
+ * `parseSlackInteraction` from `../verify/slack.js`.
  */
 import type { NotificationMessage, Notifier } from '@driftwatch/sdk';
-import { postJson } from './http.js';
+import { postJson } from '../http.js';
 
 export const SLACK_APPROVE_ACTION_ID = 'dw_approve';
 export const SLACK_REJECT_ACTION_ID = 'dw_reject';

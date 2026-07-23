@@ -138,6 +138,23 @@ const config = DriftWatchConfigSchema.parse({
   labelled span + the `agent.tool.calls` / `agent.tool.duration` metrics.
 - `DriftWatchConfigSchema` / `loadDriftWatchConfigFromEnv` — Zod-validated
   typed config for telemetry, agent, and drift-detection settings.
+- `ApprovalService` / `AutopilotScheduler` / `executeControlAction` — the full
+  perceive→reason→act orchestration engine: runs drift detection on a
+  schedule, evaluates policies, dispatches notifications, and manages
+  human-in-the-loop approvals for control actions (pause/rollback/throttle/
+  switch_model). Built entirely on the `StateStore`/`Notifier` interfaces
+  below — no concrete I/O, so it costs nothing to import.
+- `MemoryStateStore` — the zero-dependency `StateStore` implementation
+  (single-process). For multi-process, `RedisStateStore` lives at the isolated
+  subpath `@driftwatch/sdk/redis`, with `ioredis` as an optional peer
+  dependency — importing the package root never pulls it in.
+- `evaluatePolicies` — the pure function mapping a `DriftReport` + policy
+  config to a list of action intents.
+
+Concrete Slack/Telegram/webhook notifiers and inbound-webhook signature
+verification are a separate companion package,
+[`@driftwatch/autopilot`](https://www.npmjs.com/package/@driftwatch/autopilot) —
+install it only if you use those channels.
 
 Full docs, architecture, and the reference Fastify server that uses this
 SDK live in the [workspace repo](https://github.com/codewithveek/drift-watch) —

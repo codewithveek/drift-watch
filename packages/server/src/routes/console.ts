@@ -7,11 +7,9 @@
  * and Telegram always see the same truth.
  */
 import type { FastifyInstance } from 'fastify';
-import type { DriftWatchConfig, StateStore } from '@driftwatch/sdk';
+import type { DriftWatchConfig, StateStore, ApprovalService, AutopilotScheduler } from '@driftwatch/sdk';
+import { executeControlAction } from '@driftwatch/sdk';
 import type { ServerConfig } from '../config/server-config.js';
-import type { ApprovalService } from '../autopilot/approval-service.js';
-import type { AutopilotScheduler } from '../autopilot/scheduler.js';
-import { executeControlAction } from '../autopilot/actions.js';
 import { isRequestAuthorized } from './auth.js';
 
 const HISTORY_LIMIT = 100;

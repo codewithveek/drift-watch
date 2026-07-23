@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import type { ActionIntent } from '@driftwatch/sdk';
-import { MemoryStateStore } from '../state/memory-store.js';
+import type { ActionIntent } from './types.js';
+import { MemoryStateStore } from './memory-store.js';
 import { ApprovalService } from './approval-service.js';
-import type { NotifierRegistry } from '../notify/index.js';
+import type { NotifierRegistry } from './notify-dispatch.js';
 
 const emptyNotifiers: NotifierRegistry = { list: [] };
 

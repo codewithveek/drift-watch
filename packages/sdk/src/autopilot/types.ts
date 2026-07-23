@@ -1,11 +1,19 @@
 /**
  * Shared types for the Autopilot layer — Loop 2 of DriftWatch.
  *
- * These live in the SDK because they are pure data/interfaces with no I/O and
- * no provider or env coupling. The *implementations* (Redis state store, Slack
- * / Telegram / webhook notifiers, the scheduler) live in @driftwatch/server,
- * which is where side effects belong. This keeps the SDK publishable with zero
- * provider SDKs and zero process.env reads, exactly like the rest of it.
+ * The orchestration built on these types — `MemoryStateStore`,
+ * `ApprovalService`, `AutopilotScheduler`, `executeControlAction`, and the
+ * notify-dispatch helpers — lives alongside them in this package, since none
+ * of it does concrete I/O: it only calls the `StateStore`/`Notifier`
+ * interfaces defined here. Two things that DO require concrete I/O are kept
+ * out of the package root:
+ *   - `RedisStateStore` needs `ioredis` — it's an isolated subpath export at
+ *     `@driftwatch/sdk/redis` with ioredis as an optional peer dependency, so
+ *     importing the core SDK never pulls it in.
+ *   - Concrete Slack/Telegram/webhook `Notifier`s and inbound-webhook
+ *     signature verification live in the companion `@driftwatch/autopilot`
+ *     package, since they track those providers' APIs independently of this
+ *     package's release cadence.
  */
 import type { DriftVerdict } from '../drift/detector.js';
 

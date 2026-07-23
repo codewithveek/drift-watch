@@ -12,13 +12,9 @@
  * default (reject, by default) rather than hanging a paused agent forever.
  */
 import { randomUUID } from 'node:crypto';
-import type {
-  ActionIntent,
-  Approval,
-  StateStore,
-} from '@driftwatch/sdk';
+import type { ActionIntent, Approval, StateStore } from './types.js';
 import { executeControlAction } from './actions.js';
-import { notifyAll, type DispatchLogger, type NotifierRegistry } from '../notify/index.js';
+import { notifyAll, type DispatchLogger, type NotifierRegistry } from './notify-dispatch.js';
 
 export type ApprovalDecision = 'approved' | 'rejected';
 

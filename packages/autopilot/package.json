@@ -1,0 +1,58 @@
+{
+  "name": "@driftwatch/autopilot",
+  "version": "0.2.0",
+  "description": "Slack, Telegram, and generic-webhook notifiers plus inbound-webhook signature verification for DriftWatch Autopilot. Companion to @driftwatch/sdk — bring these in only if you use those channels.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Victory Lucky",
+  "homepage": "https://github.com/codewithveek/drift-watch#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codewithveek/drift-watch.git",
+    "directory": "packages/autopilot"
+  },
+  "bugs": {
+    "url": "https://github.com/codewithveek/drift-watch/issues"
+  },
+  "keywords": [
+    "ai-agent",
+    "autopilot",
+    "slack",
+    "telegram",
+    "webhook",
+    "drift-detection"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "pnpm build && pnpm test"
+  },
+  "dependencies": {
+    "@driftwatch/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
+  }
+}

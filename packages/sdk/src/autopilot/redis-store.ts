@@ -4,7 +4,10 @@
  * pending approvals, drift history, and the action log — and a leader lock
  * ensures only one process runs each scheduled drift cycle.
  *
- * ioredis is used directly here (server-side I/O); the SDK stays provider-free.
+ * Not exported from the package root — import from `@driftwatch/sdk/redis`.
+ * `ioredis` is an OPTIONAL peer dependency: installing the core SDK never
+ * pulls it in, so this is the one place in the SDK a consumer opts into a
+ * concrete I/O dependency, and only if they import this subpath.
  */
 import { Redis } from 'ioredis';
 import type {
@@ -14,7 +17,7 @@ import type {
   ApprovalStatus,
   DriftHistoryEntry,
   StateStore,
-} from '@driftwatch/sdk';
+} from './types.js';
 
 const HISTORY_CAP = 500;
 

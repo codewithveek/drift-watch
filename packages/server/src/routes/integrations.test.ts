@@ -2,13 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHmac } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { ActionIntent } from '@driftwatch/sdk';
+import { MemoryStateStore, ApprovalService } from '@driftwatch/sdk';
 import {
   registerIntegrationRoutes,
   verifySlackSignature,
 } from './integrations.js';
 import { ServerConfigSchema, type ServerConfig } from '../config/server-config.js';
-import { MemoryStateStore } from '../state/memory-store.js';
-import { ApprovalService } from '../autopilot/approval-service.js';
 
 const SIGNING_SECRET = 'test-signing-secret';
 const TELEGRAM_SECRET = 'test-telegram-secret';

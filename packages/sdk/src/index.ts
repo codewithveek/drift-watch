@@ -89,3 +89,26 @@ export {
   type PolicyCondition,
   type WindowDeltas,
 } from './autopilot/policy.js';
+export { MemoryStateStore } from './autopilot/memory-store.js';
+export {
+  notifierForAction,
+  safeNotify,
+  notifyAll,
+  type NotifierRegistry,
+  type DispatchLogger,
+} from './autopilot/notify-dispatch.js';
+export {
+  executeControlAction,
+  type ControlActionContext,
+  type ControlActionResult,
+} from './autopilot/actions.js';
+export {
+  ApprovalService,
+  type ApprovalDecision,
+  type ApprovalServiceOptions,
+} from './autopilot/approval-service.js';
+export {
+  AutopilotScheduler,
+  type SchedulerLogger,
+  type AutopilotSchedulerOptions,
+} from './autopilot/scheduler.js';

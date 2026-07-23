@@ -28,7 +28,7 @@ npm install @ai-sdk/openai   # or @ai-sdk/anthropic, @ai-sdk/google, …
 If instead you want a ready-to-run HTTP service with alerts, approvals, and a
 console, use the [server](./server.md) — it's built on exactly these functions.
 
-## The four things it does
+## The five things it does
 
 ### 1. Run an instrumented agent task
 
@@ -146,6 +146,71 @@ if (result.guardrailTriggered) {
   console.warn('guardrail hit:', result.guardrailReason);
 }
 ```
+
+### 5. Run the full Autopilot loop
+
+Drift detection (#3) is the *perceive* step. The SDK also ships the full
+*reason → act* orchestration — `ApprovalService`, `AutopilotScheduler`,
+`executeControlAction`, and the notify-dispatch helpers — so you get the whole
+notify/approve/act loop, not just the detector. None of it does concrete I/O:
+it's built entirely on the `StateStore`/`Notifier` interfaces, which you supply.
+
+```ts
+import {
+  MemoryStateStore,
+  ApprovalService,
+  AutopilotScheduler,
+  PolicyConfigSchema,
+  type NotifierRegistry,
+} from '@driftwatch/sdk';
+
+const store = new MemoryStateStore();           // or RedisStateStore, below
+const notifiers: NotifierRegistry = { list: [] }; // populate with real channels, below
+
+const approvalService = new ApprovalService({
+  store,
+  notifiers,
+  approvalTimeoutMs: 600_000,
+  timeoutDecision: 'rejected',   // a missed approval fails closed
+});
+
+const scheduler = new AutopilotScheduler({
+  store,
+  notifiers,
+  approvalService,
+  modelClient: model,
+  policyConfig: PolicyConfigSchema.parse({
+    rules: [{ when: { severity: 'high' }, do: ['notify_slack', 'pause_agent'] }],
+    mode: 'shadow',   // start here — logs intended actions, executes nothing
+  }),
+  driftDetectionConfig: config.driftDetection,
+  isDryRun: false,
+  scanIntervalMs: 60_000,
+  cooldownMs: 300_000,
+  logger: console,
+});
+
+scheduler.start();
+```
+
+**State store.** `MemoryStateStore` (shown above) is the zero-dependency,
+single-process default. For multi-process deployments, use `RedisStateStore` —
+it lives at the isolated subpath `@driftwatch/sdk/redis` so importing the SDK's
+package root never pulls in `ioredis`; only code that imports this subpath
+needs it installed:
+
+```ts
+import { RedisStateStore } from '@driftwatch/sdk/redis';
+const store = new RedisStateStore(process.env.REDIS_URL!);
+```
+
+**Notifiers.** The SDK defines the `Notifier` interface and the dispatch
+helpers (`notifyAll`, `safeNotify`, `notifierForAction`) but ships no concrete
+channels — those live in the companion
+[`@driftwatch/autopilot`](https://github.com/codewithveek/drift-watch/tree/main/packages/autopilot)
+package (Slack, Telegram, generic webhook), or bring your own by implementing
+`Notifier`. See [alerts-and-actions.md](./alerts-and-actions.md) for the full
+policy format and channel setup.
 
 ## Bootstrapping telemetry correctly
 

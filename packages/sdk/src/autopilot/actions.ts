@@ -16,7 +16,7 @@ import type {
   AgentRuntimeState,
   DriftSeverity,
   StateStore,
-} from '@driftwatch/sdk';
+} from './types.js';
 import { randomUUID } from 'node:crypto';
 
 export interface ControlActionContext {

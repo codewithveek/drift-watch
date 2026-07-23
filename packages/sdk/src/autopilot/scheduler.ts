@@ -1,8 +1,9 @@
 /**
  * Autopilot scheduler — the autonomous perceive→reason→act loop (Loop 2).
  *
- * Every SCAN_INTERVAL_MS the leader process (elected via a Redis SET-NX lock so
- * only ONE process acts per cycle in a multi-process deployment):
+ * Every SCAN_INTERVAL_MS the leader process (elected via the StateStore's
+ * leader lock so only ONE process acts per cycle in a multi-process
+ * deployment):
  *   1. perceive — detectBehavioralDrift over the SigNoz windows (or fixtures),
  *   2. reason   — evaluatePolicies maps the report to ActionIntents,
  *   3. act      — notify_* intents fire immediately; control intents open an
@@ -11,24 +12,18 @@
  * In `shadow` mode nothing is executed: intended actions are logged only, which
  * is the safe default and the CI/demo path.
  */
-import {
-  detectBehavioralDrift,
-  evaluatePolicies,
-  type ActionIntent,
-  type ActionLogEntry,
-  type DriftDetectionConfig,
-  type DriftReport,
-  type ModelClient,
-  type PolicyConfig,
-  type StateStore,
-} from '@driftwatch/sdk';
 import { randomUUID } from 'node:crypto';
+import { detectBehavioralDrift, type DriftReport } from '../drift/detector.js';
+import type { ModelClient } from '../model-client.js';
+import type { DriftDetectionConfig } from '../config/schema.js';
+import { evaluatePolicies, type PolicyConfig } from './policy.js';
+import type { ActionIntent, ActionLogEntry, StateStore } from './types.js';
 import type { ApprovalService } from './approval-service.js';
 import {
   notifierForAction,
   safeNotify,
   type NotifierRegistry,
-} from '../notify/index.js';
+} from './notify-dispatch.js';
 
 const LEADER_LOCK_KEY = 'scheduler:leader';
 

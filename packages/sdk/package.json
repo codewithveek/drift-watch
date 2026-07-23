@@ -1,6 +1,6 @@
 {
   "name": "@driftwatch/sdk",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Self-observing AI agent SDK: OpenTelemetry instrumentation for AI SDK agents plus an LLM-over-traces behavioral drift detector. Bring your own model client — no provider SDKs bundled.",
   "type": "module",
   "license": "MIT",
@@ -27,10 +27,15 @@
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./redis": {
+      "types": "./dist/redis.d.ts",
+      "import": "./dist/redis.js"
     }
   },
   "files": [
@@ -63,8 +68,17 @@
     "ai": "^7.0.31",
     "zod": "^3.25.76"
   },
+  "peerDependencies": {
+    "ioredis": "^5.4.1"
+  },
+  "peerDependenciesMeta": {
+    "ioredis": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "ioredis": "^5.4.1",
     "typescript": "^5.6.0",
     "vitest": "^4.1.10"
   }

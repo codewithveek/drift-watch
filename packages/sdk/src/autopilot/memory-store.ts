@@ -1,8 +1,8 @@
 /**
- * In-memory StateStore — the zero-dependency fallback used when REDIS_URL is
- * unset. Perfect for single-process dev and the demo; NOT suitable across
- * multiple processes (each would keep its own state). For multi-process, set
- * REDIS_URL to use redis-store.ts instead.
+ * In-memory StateStore — the zero-dependency default. Perfect for single-
+ * process use (a standalone script, a single container); NOT suitable across
+ * multiple processes, since each keeps its own state. For multi-process
+ * deployments, use `RedisStateStore` from `@driftwatch/sdk/redis` instead.
  */
 import type {
   ActionLogEntry,
@@ -11,7 +11,7 @@ import type {
   ApprovalStatus,
   DriftHistoryEntry,
   StateStore,
-} from '@driftwatch/sdk';
+} from './types.js';
 
 const HISTORY_CAP = 500;
 

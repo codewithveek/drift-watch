@@ -3,18 +3,21 @@
  * registry, the approval service, and (when enabled) the scheduler from typed
  * config. Kept out of server.ts so the wiring is testable and server.ts stays
  * a thin bootstrap.
+ *
+ * ApprovalService and AutopilotScheduler are @driftwatch/sdk orchestration —
+ * this file only supplies the concrete StateStore and NotifierRegistry they
+ * run against.
  */
-import type {
-  DriftWatchConfig,
-  ModelClient,
-  StateStore,
+import type { DriftWatchConfig, ModelClient, StateStore } from '@driftwatch/sdk';
+import {
+  ApprovalService,
+  AutopilotScheduler,
+  type SchedulerLogger,
 } from '@driftwatch/sdk';
 import type { ServerConfig } from '../config/server-config.js';
 import { loadPolicyConfig } from '../config/policy-loader.js';
 import { createStateStore } from '../state/index.js';
 import { createNotifiers, type NotifierRegistry } from '../notify/index.js';
-import { ApprovalService } from './approval-service.js';
-import { AutopilotScheduler, type SchedulerLogger } from './scheduler.js';
 
 export interface Autopilot {
   store: StateStore;

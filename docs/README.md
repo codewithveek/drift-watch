@@ -38,10 +38,11 @@ before a quiet regression becomes an incident or a bill.
 | [Deployment](./deployment.md) | Production Docker, compose, Redis, and the go-live checklist. |
 | [Security](./security.md) | Auth, rate limiting, webhook signatures, and payload capture. |
 
-## The three packages
+## The packages
 
 | Package | What it is |
 |---|---|
-| **`@driftwatch/sdk`** | The reusable library: telemetry, drift detection, inline guardrails, and the pure policy engine. Bundles no provider SDKs; every function takes typed config and clients as parameters. Use it standalone in your own app. |
-| **`@driftwatch/server`** | The reference Fastify service built on the SDK: the `/run` and `/drift` endpoints, the autopilot loop, the control-plane API, notifiers, and shared state. Deploy this to run DriftWatch as a service. |
+| **`@driftwatch/sdk`** | **The product.** Telemetry, drift detection, inline guardrails, the pure policy engine, and the full Autopilot orchestration engine (`ApprovalService`, `AutopilotScheduler`, `MemoryStateStore`, `executeControlAction`) — all pure, no provider SDKs bundled. `RedisStateStore` lives at the isolated `@driftwatch/sdk/redis` subpath with `ioredis` as an optional peer dependency. Use it standalone in your own agent. |
+| **`@driftwatch/autopilot`** | Concrete Slack, Telegram, and generic-webhook `Notifier` implementations, plus framework-agnostic inbound-webhook signature verification. A companion to the SDK — bring it in only if you use those channels. |
+| **`@driftwatch/server`** | The reference Fastify service built on the two packages above: the `/run` and `/drift` endpoints, the control-plane API, and shared state wiring. Deploy this to try DriftWatch immediately, or use it as a blueprint for your own service. |
 | **`@driftwatch/console`** | The operator web console (approvals, drift feed, action log, health). Served by the server at `/console/`. |

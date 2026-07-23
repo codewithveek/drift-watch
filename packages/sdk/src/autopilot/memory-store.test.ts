@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { MemoryStateStore } from './memory-store.js';
-import type { Approval } from '@driftwatch/sdk';
+import type { Approval } from './types.js';
 
 function pendingApproval(id: string): Approval {
   return {
