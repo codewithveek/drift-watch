@@ -106,11 +106,19 @@ export async function detectBehavioralDrift(
     ? loadFixtureWindows()
     : await queryLiveWindows(driftDetectionConfig);
 
+  // If Autopilot switched the agent's model this window, the resulting behavior
+  // change is intentional — tell the judge so it doesn't flag the cure as the
+  // disease. Fixtures have no such context. See queryModelSwitchNote.
+  const modelSwitchNote = isDryRun
+    ? undefined
+    : await queryModelSwitchNote(driftDetectionConfig);
+
   const modelClientDescriptor = describeModelClient(modelClient);
   const { verdict, judgeTokenUsage, judgeAttempts } = await judgeDriftVerdict({
     baselineWindowStats,
     currentWindowStats,
     modelClient,
+    modelSwitchNote,
   });
 
   return {
@@ -253,6 +261,54 @@ function buildTokenSpendQuery(): Record<string, unknown> {
     spaceAggregation: 'sum',
     expression: 'C',
   });
+}
+
+function buildModelSwitchQuery(): Record<string, unknown> {
+  return buildMetricBuilderQuery({
+    metricKey: 'agent.model.switches',
+    instrumentType: 'Sum',
+    timeAggregation: 'sum',
+    spaceAggregation: 'sum',
+    expression: 'A',
+  });
+}
+
+/**
+ * Count Autopilot model switches in the current window (the `agent.model.switches`
+ * counter emitted by executeControlAction) and, if any, return a note the judge
+ * uses to avoid classifying the *intended* behavior change as drift.
+ *
+ * Fail-safe by design: any query error resolves to "no switch" (undefined), so a
+ * hiccup here never breaks drift detection — the worst case is a switch isn't
+ * discounted, i.e. exactly today's behavior.
+ */
+async function queryModelSwitchNote(
+  driftDetectionConfig: DriftDetectionConfig,
+): Promise<string | undefined> {
+  const endTimeMs = Date.now();
+  const startTimeMs = endTimeMs - ONE_HOUR_MS;
+  try {
+    const signozResponseBody = await querySignozRange({
+      driftDetectionConfig,
+      startTimeMs,
+      endTimeMs,
+      builderQueries: { A: buildModelSwitchQuery() },
+    });
+    const switchCount = extractTokenSpend(
+      findBuilderResult(signozResponseBody.data?.result ?? [], 'A'),
+    );
+    if (switchCount <= 0) return undefined;
+    const times = switchCount >= 2 ? `${Math.round(switchCount)} times` : 'once';
+    return (
+      `Autopilot switched the monitored agent's model ${times} during the CURRENT window ` +
+      `(an intentional remediation, not organic behavior). Changes attributable to a model ` +
+      `switch — especially token-spend and per-tool latency shifts — are EXPECTED and must ` +
+      `NOT be classified as drift on their own. Flag drift only for changes beyond what a ` +
+      `model switch explains (e.g. a real error-rate spike or a tool-mix collapse).`
+    );
+  } catch {
+    return undefined;
+  }
 }
 
 async function querySignozRange(options: {
@@ -466,17 +522,23 @@ async function judgeDriftVerdict(options: {
   baselineWindowStats: WindowStats;
   currentWindowStats: WindowStats;
   modelClient: ModelClient;
+  modelSwitchNote?: string;
 }): Promise<{
   verdict: DriftVerdict;
   judgeTokenUsage: TokenUsageSummary;
   judgeAttempts: number;
 }> {
-  const { baselineWindowStats, currentWindowStats, modelClient } = options;
+  const { baselineWindowStats, currentWindowStats, modelClient, modelSwitchNote } =
+    options;
 
   const messages: ModelMessage[] = [
     {
       role: 'user',
-      content: buildDriftJudgePrompt({ baselineWindowStats, currentWindowStats }),
+      content: buildDriftJudgePrompt({
+        baselineWindowStats,
+        currentWindowStats,
+        modelSwitchNote,
+      }),
     },
   ];
 
@@ -626,12 +688,14 @@ Example of a correctly formatted reply (structure only — do not reuse these va
 function buildDriftJudgePrompt(options: {
   baselineWindowStats: WindowStats;
   currentWindowStats: WindowStats;
+  modelSwitchNote?: string;
 }): string {
-  const { baselineWindowStats, currentWindowStats } = options;
+  const { baselineWindowStats, currentWindowStats, modelSwitchNote } = options;
+  const switchContext = modelSwitchNote ? `\n\nCONTEXT: ${modelSwitchNote}` : '';
   return `Compare the CURRENT window against the BASELINE and decide whether the agent's behavior has drifted enough to warrant a human alert. Consider shifts in tool-call mix, rising error rate, latency regressions, and token-spend spikes.
 
 BASELINE: ${JSON.stringify(baselineWindowStats)}
-CURRENT:  ${JSON.stringify(currentWindowStats)}
+CURRENT:  ${JSON.stringify(currentWindowStats)}${switchContext}
 
 Reply with ONLY the JSON object described in your instructions.`;
 }

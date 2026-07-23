@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import rateLimit from '@fastify/rate-limit';
-import { DriftWatchConfigSchema, type ModelClient } from '@driftwatch/sdk';
+import { DriftWatchConfigSchema, MemoryStateStore, type ModelClient } from '@driftwatch/sdk';
 import { registerRoutes } from './agent.js';
 import type { ServerConfig } from '../config/server-config.js';
 
@@ -80,6 +80,8 @@ async function buildTestServer(
   });
   await registerRoutes(fastifyServer, {
     modelClient: 'fake-model' as unknown as ModelClient,
+    modelRegistry: {},
+    store: new MemoryStateStore(),
     tools: {},
     serverConfig,
     driftWatchConfig: DriftWatchConfigSchema.parse({}),

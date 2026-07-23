@@ -125,7 +125,12 @@ export carries the activity *since the last one*, so summing over a window gives
 
 ### Building dashboard panels
 
-In the SigNoz **Dashboards** → new panel → **Metrics** query builder:
+Fastest path: import [`observability/signoz-dashboard.json`](../observability/signoz-dashboard.json)
+via SigNoz **Dashboards → New dashboard → Import JSON** — it ships all three
+panels below, pre-built.
+
+To build them yourself instead, in the SigNoz **Dashboards** → new panel →
+**Metrics** query builder:
 
 - **Calls per tool** — metric `agent.tool.calls`, aggregation *Sum*, group by
   `tool`. Add `outcome` to split success vs error.
@@ -136,6 +141,53 @@ In the SigNoz **Dashboards** → new panel → **Metrics** query builder:
 
 These are the same signals `detectBehavioralDrift` reads — the dashboard shows
 you *what* changed; the drift verdict tells you *whether it matters*.
+
+## Ask your agent's telemetry in plain English (SigNoz MCP)
+
+SigNoz ships an [MCP server](https://signoz.io/docs/ai/signoz-mcp-server/) that
+lets an AI assistant (Claude, Cursor, Copilot, …) query your observability data
+in natural language. Because DriftWatch already emits standard OTel to SigNoz,
+this works over a DriftWatch-instrumented agent with **zero extra code and no
+extra service to run** — it's the same data you see in the Services and Traces
+tabs, now conversational. If you installed SigNoz with
+[Foundry](./deployment.md), the MCP server was installed in the same step.
+
+Point your assistant's MCP config at the SigNoz MCP server, then ask things like:
+
+- *"How often is the `search_docs` tool erroring on the `driftwatch` service?"*
+- *"What's the p95 latency of `get_weather` over the last hour?"*
+- *"Which model drove the most token spend today?"*
+- *"Show me the slowest `agent.run` traces and where they spent their time."*
+
+A minimal Claude Desktop / Cursor MCP entry pointed at SigNoz Cloud:
+
+```jsonc
+{
+  "mcpServers": {
+    "signoz": {
+      "command": "npx",
+      "args": ["-y", "@signoz/mcp-server"],
+      "env": {
+        "SIGNOZ_URL": "https://<your-team>.<region>.signoz.cloud",
+        "SIGNOZ_API_KEY": "<your-api-key>"
+      }
+    }
+  }
+}
+```
+
+(Use the same `SIGNOZ_URL` / `SIGNOZ_API_KEY` as the drift detector — the query
+host and a Viewer-role key, not the ingest host. Check SigNoz's
+[MCP docs](https://signoz.io/docs/ai/signoz-mcp-server/) for the exact package
+name and any self-hosted transport options.)
+
+**Division of labor.** DriftWatch's own drift detector is the *automated*,
+deterministic trigger — it runs every cycle, compares two windows, and decides
+whether to alert or act. The SigNoz MCP server is the *interactive* layer — a
+human (or their assistant) exploring *why*, on demand, with the full richness of
+traces/metrics/logs. They answer different questions, which is why DriftWatch
+doesn't ship an MCP server of its own: querying telemetry is exactly what
+SigNoz's already does, for free.
 
 ## Other OpenTelemetry backends
 

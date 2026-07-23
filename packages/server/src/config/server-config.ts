@@ -37,6 +37,13 @@ export const ServerConfigSchema = z.object({
   approvalTimeoutMs: z.coerce.number().int().positive().default(600_000),
   /** Safe default when an approval times out. */
   approvalTimeoutDecision: z.enum(['approved', 'rejected']).default('rejected'),
+  /**
+   * Model id an approved `switch_model` action switches the agent to. Must be
+   * a key in model-client.ts's `modelRegistry`. Defaults to MODEL_FALLBACK, so
+   * setting that one var enables the whole feature. Empty = switch_model is a
+   * no-op.
+   */
+  switchModelTo: z.string().default(''),
 
   // --- Notification channels ---------------------------------------------
   slackWebhookUrl: z.string().default(''),
@@ -78,6 +85,7 @@ export function loadServerConfigFromEnv(
     cooldownMs: env.AUTOPILOT_COOLDOWN_MS,
     approvalTimeoutMs: env.AUTOPILOT_APPROVAL_TIMEOUT_MS,
     approvalTimeoutDecision: env.AUTOPILOT_APPROVAL_TIMEOUT_DECISION,
+    switchModelTo: env.AUTOPILOT_SWITCH_MODEL_TO || env.MODEL_FALLBACK,
     slackWebhookUrl: env.SLACK_WEBHOOK_URL,
     slackSigningSecret: env.SLACK_SIGNING_SECRET,
     telegramBotToken: env.TELEGRAM_BOT_TOKEN,

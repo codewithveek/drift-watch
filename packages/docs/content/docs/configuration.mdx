@@ -104,6 +104,7 @@ The drift-triggered remediation loop and its channels. All server-owned.
 | `AUTOPILOT_COOLDOWN_MS` | `cooldownMs` | `300000` | Dedup window so the same action doesn't re-fire in a storm. |
 | `AUTOPILOT_APPROVAL_TIMEOUT_MS` | `approvalTimeoutMs` | `600000` | How long a pending control-action approval waits before the safe default applies. |
 | `AUTOPILOT_APPROVAL_TIMEOUT_DECISION` | `approvalTimeoutDecision` | `rejected` | Safe default applied on approval timeout. |
+| `AUTOPILOT_SWITCH_MODEL_TO` | `switchModelTo` | `MODEL_FALLBACK` | Model id an approved `switch_model` action switches the agent to. Must be a key in `model-client.ts`'s registry. See [alerts-and-actions.md → Model switching](/docs/alerts-and-actions#model-switching-self-healing-cost--reliability). |
 | `AUTOPILOT_POLICIES` | `policiesJson` | `''` | Inline policy JSON (array of `{when, do}` rules). Takes precedence over the file. |
 | `AUTOPILOT_POLICIES_FILE` | `policiesFile` | `''` | Path to a `policies.json` file. Falls back to a built-in default when both are empty. |
 
@@ -166,7 +167,8 @@ provider, see [server.md → Model client](/docs/server#the-model-client).
 |---|---|---|
 | `QWEN_BASE_URL` | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | Qwen Cloud OpenAI-compatible base URL. |
 | `QWEN_API_KEY` | `''` | Your Qwen Cloud API key. Required to make real model calls. |
-| `MODEL` | `qwen3.7-max` | Model id — e.g. `qwen3.7-max` / `qwen-plus` / `qwen-turbo`. |
+| `MODEL` | `qwen3.7-max` | Primary model id — e.g. `qwen3.7-max` / `qwen-plus` / `qwen-turbo`. |
+| `MODEL_FALLBACK` | `''` | Optional cheaper model id Autopilot can switch the agent to. Setting it registers the model and becomes the default `AUTOPILOT_SWITCH_MODEL_TO`. |
 
 **Any other provider** — install exactly that one package, swap two lines:
 

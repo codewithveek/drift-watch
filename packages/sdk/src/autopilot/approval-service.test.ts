@@ -15,6 +15,15 @@ function controlIntent(): ActionIntent {
   };
 }
 
+function switchModelIntent(): ActionIntent {
+  return {
+    type: 'switch_model',
+    category: 'control',
+    severity: 'medium',
+    reason: 'token spend spiked',
+  };
+}
+
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe('ApprovalService', () => {
@@ -44,6 +53,38 @@ describe('ApprovalService', () => {
     // Approving pause_agent should have paused the monitored agent.
     const state = await store.getAgentState();
     expect(state.status).toBe('paused');
+    service.stop();
+  });
+
+  it('switches the agent to switchModelTo when a switch_model approval is approved', async () => {
+    const service = new ApprovalService({
+      store,
+      notifiers: emptyNotifiers,
+      approvalTimeoutMs: 60_000,
+      timeoutDecision: 'rejected',
+      switchModelTo: 'qwen-plus',
+    });
+
+    const approval = await service.requestApproval(switchModelIntent());
+    await service.resolve(approval.id, 'approved', 'alice', 'console');
+
+    expect((await store.getAgentState()).activeModel).toBe('qwen-plus');
+    service.stop();
+  });
+
+  it('makes switch_model a no-op when no switchModelTo is configured', async () => {
+    const service = new ApprovalService({
+      store,
+      notifiers: emptyNotifiers,
+      approvalTimeoutMs: 60_000,
+      timeoutDecision: 'rejected',
+      // switchModelTo intentionally omitted
+    });
+
+    const approval = await service.requestApproval(switchModelIntent());
+    await service.resolve(approval.id, 'approved', 'alice', 'console');
+
+    expect((await store.getAgentState()).activeModel).toBeUndefined();
     service.stop();
   });
 

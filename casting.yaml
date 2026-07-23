@@ -1,0 +1,24 @@
+# Deploys SigNoz via SigNoz Foundry (https://github.com/SigNoz/foundry) — the
+# reproducible way to bring up the SigNoz backend this project sends
+# telemetry to and queries for drift detection.
+#
+# Install foundryctl, then run:
+#   curl -fsSL https://signoz.io/foundry.sh | bash
+#   ./bin/foundryctl cast -f casting.yaml
+#
+# This deploys the standard SigNoz self-host stack (UI + query-service on
+# :8080, OTLP collector on :4318) via Docker Compose — the same endpoints
+# docs/signoz.md and docker-compose.signoz.yml already assume. Once it's up,
+# point DriftWatch at it per docs/signoz.md ("Connecting to self-hosted
+# SigNoz"): OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318,
+# SIGNOZ_URL=http://localhost:8080.
+#
+# `foundryctl cast` also generates casting.yaml.lock alongside this file —
+# commit that too so a `cast` re-run reproduces the exact same deployment.
+apiVersion: v1alpha1
+metadata:
+  name: signoz
+spec:
+  deployment:
+    mode: docker
+    flavor: compose

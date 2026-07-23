@@ -44,6 +44,7 @@ export function createAutopilot(options: {
     notifiers,
     approvalTimeoutMs: serverConfig.approvalTimeoutMs,
     timeoutDecision: serverConfig.approvalTimeoutDecision,
+    switchModelTo: serverConfig.switchModelTo,
     logger,
   });
 

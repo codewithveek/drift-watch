@@ -13,7 +13,7 @@ import { registerRoutes } from './routes/agent.js';
 import { registerConsoleRoutes } from './routes/console.js';
 import { registerIntegrationRoutes } from './routes/integrations.js';
 import { loadServerConfigFromEnv } from './config/server-config.js';
-import { modelClient } from './config/model-client.js';
+import { modelClient, modelRegistry } from './config/model-client.js';
 import { tools } from './tools.js';
 import { createAutopilot } from './autopilot/index.js';
 
@@ -45,6 +45,8 @@ const autopilot = createAutopilot({
 
 await registerRoutes(fastifyServer, {
   modelClient,
+  modelRegistry,
+  store: autopilot.store,
   tools,
   serverConfig,
   driftWatchConfig,

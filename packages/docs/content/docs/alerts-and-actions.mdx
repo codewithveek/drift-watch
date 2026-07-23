@@ -175,6 +175,51 @@ Everything — verdicts, approvals, and executed actions — is visible in the
 [operator console](/docs/console) and via the control-plane API
 (`/drift/history`, `/approvals`, `/actions/log`).
 
+## Model switching (self-healing cost / reliability)
+
+`switch_model` is the one remediation that *adapts* the agent instead of just
+halting it — it moves the agent to a different model. The headline use case is
+**cost**: when SigNoz shows token spend spiking, downshift from an expensive
+model to a cheaper one, and watch spend drop in the same dashboard.
+
+**Setup.** Register the target model and point a policy at it:
+
+```bash
+MODEL=qwen3.7-max                 # primary
+MODEL_FALLBACK=qwen-plus          # registers qwen-plus + becomes the switch target
+AUTOPILOT_ENABLED=1
+AUTOPILOT_MODE=enforce
+AUTOPILOT_POLICIES='[{"when":{"tokenSpendDeltaPct":100},"do":["notify_slack","switch_model"]}]'
+```
+
+Add more models by editing `model-client.ts`'s registry; set
+`AUTOPILOT_SWITCH_MODEL_TO` to choose which one `switch_model` targets (defaults
+to `MODEL_FALLBACK`).
+
+**How it flows.** Drift detection sees token spend cross the threshold → the
+policy proposes `switch_model` → because it's a control action, it creates an
+**approval** (a human confirms the downshift — a good thing, since a cheaper
+model may behave differently). On approval, the agent's active model changes and
+the very next `/run` routes to the new model. The drift judge itself always
+stays on the primary model, so switching the agent never weakens detection.
+
+**The cure doesn't look like the disease.** Switching models is itself a
+behavior change, so a naive detector would flag the intended switch as *new*
+drift on the next cycle. DriftWatch avoids that: every switch emits an
+`agent.model.switch` span (visible on the trace timeline, and explainable via
+[SigNoz MCP](/docs/signoz#ask-your-agents-telemetry-in-plain-english-signoz-mcp))
+plus an `agent.model.switches` counter. The detector reads that counter and
+tells the judge "a switch happened this window — the expected change from it is
+not drift, but flag anything beyond it." So an approved downshift won't
+false-alarm, while a genuine regression that happens to coincide still gets
+caught.
+
+<Callout title="A heuristic, not rigorous re-baselining">
+  The current window still blends pre- and post-switch data, and the judge
+  reasons about the mix. Rigorous re-baselining (measuring drift only from
+  post-switch data forward) is a planned follow-up.
+</Callout>
+
 ## Configuration reference
 
 Full env var tables for the loop and channels are in

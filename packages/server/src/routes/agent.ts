@@ -5,12 +5,18 @@ import {
   detectBehavioralDrift,
   type ModelClient,
   type DriftWatchConfig,
+  type StateStore,
 } from '@driftwatch/sdk';
 import type { ServerConfig } from '../config/server-config.js';
 import { isRequestAuthorized } from './auth.js';
 
 export interface RegisterRoutesOptions {
+  /** Primary/default client — used by the drift judge and when no switch is active. */
   modelClient: ModelClient;
+  /** id -> client, for routing the agent to a switched model. */
+  modelRegistry: Record<string, ModelClient>;
+  /** Shared state; read to see which model Autopilot has the agent switched to. */
+  store: StateStore;
   tools: ToolSet;
   serverConfig: ServerConfig;
   driftWatchConfig: DriftWatchConfig;
@@ -20,7 +26,20 @@ export async function registerRoutes(
   fastifyServer: FastifyInstance,
   options: RegisterRoutesOptions,
 ): Promise<void> {
-  const { modelClient, tools, serverConfig, driftWatchConfig } = options;
+  const { modelClient, modelRegistry, store, tools, serverConfig, driftWatchConfig } =
+    options;
+
+  /**
+   * Pick the client for the next agent run: the model Autopilot has switched
+   * the agent to (if any and known), else the primary. Read fresh per request
+   * so a switch takes effect on the very next call, and so all processes
+   * (which share the store) converge on the same model.
+   */
+  async function resolveAgentModel(): Promise<ModelClient> {
+    const { activeModel } = await store.getAgentState();
+    if (activeModel && modelRegistry[activeModel]) return modelRegistry[activeModel];
+    return modelClient;
+  }
 
   fastifyServer.get('/health', async () => ({ ok: true }));
 
@@ -50,7 +69,7 @@ export async function registerRoutes(
       try {
         const agentTaskResult = await runAgentTask({
           prompt: request.body.prompt,
-          modelClient,
+          modelClient: await resolveAgentModel(),
           tools,
           maxSteps: driftWatchConfig.agent.maxSteps,
           guardrails: {

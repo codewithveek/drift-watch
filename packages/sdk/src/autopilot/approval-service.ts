@@ -24,6 +24,13 @@ export interface ApprovalServiceOptions {
   approvalTimeoutMs: number;
   timeoutDecision: ApprovalDecision;
   logger?: DispatchLogger;
+  /**
+   * Model id an approved `switch_model` action switches the agent to. The
+   * target is deployment config ("when you downshift, go here"), not per-drift
+   * data, so it lives on the service rather than being threaded through every
+   * intent/approval. Empty = `switch_model` is a no-op (nothing to switch to).
+   */
+  switchModelTo?: string;
 }
 
 export class ApprovalService {
@@ -32,6 +39,7 @@ export class ApprovalService {
   private readonly approvalTimeoutMs: number;
   private readonly timeoutDecision: ApprovalDecision;
   private readonly logger?: DispatchLogger;
+  private readonly switchModelTo?: string;
   /** Live timeout handles, so we can cancel on resolve and on shutdown. */
   private readonly timers = new Map<string, NodeJS.Timeout>();
 
@@ -41,6 +49,7 @@ export class ApprovalService {
     this.approvalTimeoutMs = options.approvalTimeoutMs;
     this.timeoutDecision = options.timeoutDecision;
     this.logger = options.logger;
+    this.switchModelTo = options.switchModelTo;
   }
 
   /**
@@ -101,6 +110,7 @@ export class ApprovalService {
         actor,
         channel,
         severity: resolved.severity,
+        targetModel: this.switchModelTo,
       });
     }
 

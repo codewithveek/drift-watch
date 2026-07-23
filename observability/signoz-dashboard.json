@@ -1,0 +1,165 @@
+{
+  "title": "DriftWatch — Agent Behavior",
+  "description": "Tool-call mix, tool latency, and token spend for a DriftWatch-instrumented agent. Sourced from the agent.tool.calls, agent.tool.duration, and agent.tokens metrics emitted by @driftwatch/sdk. Import via SigNoz -> Dashboards -> New dashboard -> Import JSON.",
+  "tags": ["driftwatch", "ai-agent"],
+  "version": "v5",
+  "uuid": "06018c89-2874-4ded-934b-7b214053afa2",
+  "variables": {},
+  "panelMap": {},
+  "layout": [
+    { "i": "d01a0b8a-870c-4898-b52e-8aa7bc30df7c", "x": 0, "y": 0, "w": 6, "h": 6, "moved": false, "static": false },
+    { "i": "8a1a5dcd-bf3d-42cb-819d-6624cc66502d", "x": 6, "y": 0, "w": 6, "h": 6, "moved": false, "static": false },
+    { "i": "d2f497ae-203f-46f0-b6b2-6ef4ad9a008c", "x": 0, "y": 6, "w": 12, "h": 6, "moved": false, "static": false }
+  ],
+  "widgets": [
+    {
+      "id": "d01a0b8a-870c-4898-b52e-8aa7bc30df7c",
+      "title": "Tool calls by tool & outcome",
+      "description": "How often each skill (tool) gets called, split ok vs error.",
+      "panelTypes": "graph",
+      "yAxisUnit": "short",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "timePreferance": "GLOBAL_TIME",
+      "softMin": 0,
+      "softMax": 0,
+      "thresholds": [],
+      "query": {
+        "queryType": "builder",
+        "promql": [{ "name": "A", "query": "", "legend": "", "disabled": false }],
+        "clickhouse_sql": [{ "name": "A", "query": "", "legend": "", "disabled": false }],
+        "builder": {
+          "queryFormulas": [],
+          "queryData": [
+            {
+              "queryName": "A",
+              "expression": "A",
+              "disabled": false,
+              "dataSource": "metrics",
+              "stepInterval": 60,
+              "legend": "{{tool}} ({{outcome}})",
+              "limit": null,
+              "orderBy": [],
+              "functions": [],
+              "having": { "expression": "" },
+              "filter": { "expression": "" },
+              "aggregations": [
+                {
+                  "metricName": "agent.tool.calls",
+                  "temporality": null,
+                  "timeAggregation": "sum",
+                  "spaceAggregation": "sum",
+                  "reduceTo": "sum"
+                }
+              ],
+              "groupBy": [
+                { "key": "tool", "dataType": "string", "type": "tag", "isColumn": false, "isJSON": false, "id": "tool--string--tag--false" },
+                { "key": "outcome", "dataType": "string", "type": "tag", "isColumn": false, "isJSON": false, "id": "outcome--string--tag--false" }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "8a1a5dcd-bf3d-42cb-819d-6624cc66502d",
+      "title": "Tool latency p95",
+      "description": "Per-tool p95 execution latency, from the agent.tool.duration histogram. Reads the exploded .bucket series — SigNoz does not expose the histogram's base metric name directly.",
+      "panelTypes": "graph",
+      "yAxisUnit": "ms",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "timePreferance": "GLOBAL_TIME",
+      "softMin": 0,
+      "softMax": 0,
+      "thresholds": [],
+      "query": {
+        "queryType": "builder",
+        "promql": [{ "name": "A", "query": "", "legend": "", "disabled": false }],
+        "clickhouse_sql": [{ "name": "A", "query": "", "legend": "", "disabled": false }],
+        "builder": {
+          "queryFormulas": [],
+          "queryData": [
+            {
+              "queryName": "A",
+              "expression": "A",
+              "disabled": false,
+              "dataSource": "metrics",
+              "stepInterval": 60,
+              "legend": "{{tool}} p95",
+              "limit": null,
+              "orderBy": [],
+              "functions": [],
+              "having": { "expression": "" },
+              "filter": { "expression": "" },
+              "aggregations": [
+                {
+                  "metricName": "agent.tool.duration.bucket",
+                  "temporality": null,
+                  "timeAggregation": "",
+                  "spaceAggregation": "p95",
+                  "reduceTo": "avg"
+                }
+              ],
+              "groupBy": [
+                { "key": "tool", "dataType": "string", "type": "tag", "isColumn": false, "isJSON": false, "id": "tool--string--tag--false" }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "d2f497ae-203f-46f0-b6b2-6ef4ad9a008c",
+      "title": "Token spend by model",
+      "description": "Token usage from the agent.tokens counter, split by model and input/output. Group by function_id instead of type to separate agent-run spend from drift-judge spend.",
+      "panelTypes": "graph",
+      "yAxisUnit": "short",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "timePreferance": "GLOBAL_TIME",
+      "softMin": 0,
+      "softMax": 0,
+      "thresholds": [],
+      "query": {
+        "queryType": "builder",
+        "promql": [{ "name": "A", "query": "", "legend": "", "disabled": false }],
+        "clickhouse_sql": [{ "name": "A", "query": "", "legend": "", "disabled": false }],
+        "builder": {
+          "queryFormulas": [],
+          "queryData": [
+            {
+              "queryName": "A",
+              "expression": "A",
+              "disabled": false,
+              "dataSource": "metrics",
+              "stepInterval": 60,
+              "legend": "{{model}} ({{type}})",
+              "limit": null,
+              "orderBy": [],
+              "functions": [],
+              "having": { "expression": "" },
+              "filter": { "expression": "" },
+              "aggregations": [
+                {
+                  "metricName": "agent.tokens",
+                  "temporality": null,
+                  "timeAggregation": "sum",
+                  "spaceAggregation": "sum",
+                  "reduceTo": "sum"
+                }
+              ],
+              "groupBy": [
+                { "key": "model", "dataType": "string", "type": "tag", "isColumn": false, "isJSON": false, "id": "model--string--tag--false" },
+                { "key": "type", "dataType": "string", "type": "tag", "isColumn": false, "isJSON": false, "id": "type--string--tag--false" }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

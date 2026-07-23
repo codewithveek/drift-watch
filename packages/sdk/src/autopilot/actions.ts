@@ -10,6 +10,7 @@
  * Notify actions are NOT handled here — they are safe side effects dispatched
  * directly through the notifiers by the scheduler/approval service.
  */
+import { trace, metrics, type Counter } from '@opentelemetry/api';
 import type {
   ActionLogEntry,
   ActionType,
@@ -18,6 +19,48 @@ import type {
   StateStore,
 } from './types.js';
 import { randomUUID } from 'node:crypto';
+
+const tracer = trace.getTracer('driftwatch');
+
+/**
+ * Lazily created (see instrument.ts for why module-load creation binds to a
+ * no-op meter): counts Autopilot model switches so the drift detector can tell
+ * an *intentional* switch from unexplained drift, and so a switch is visible on
+ * a dashboard. Paired with the `agent.model.switch` span below, which puts the
+ * same event on the trace timeline for correlation and for SigNoz MCP.
+ */
+let cachedSwitchCounter: Counter | undefined;
+function getModelSwitchCounter(): Counter {
+  if (!cachedSwitchCounter) {
+    cachedSwitchCounter = metrics
+      .getMeter('driftwatch')
+      .createCounter('agent.model.switches', {
+        description: 'Count of Autopilot-initiated model switches, by from/to model',
+      });
+  }
+  return cachedSwitchCounter;
+}
+
+/**
+ * Emit the observability marker for an applied model switch: a short span (for
+ * trace-timeline correlation — you can see the switch right before the behavior
+ * change, and SigNoz MCP can explain it) plus a counter increment (the
+ * low-cardinality signal the drift detector queries to avoid flagging the
+ * intended change as drift). `from` is the model before the switch, `to` after.
+ */
+function recordModelSwitchMarker(
+  from: string | undefined,
+  to: string,
+  reason: string,
+): void {
+  const attributes = {
+    'agent.model.from': from ?? 'default',
+    'agent.model.to': to,
+    'agent.control.reason': reason,
+  };
+  tracer.startSpan('agent.model.switch', { attributes }).end();
+  getModelSwitchCounter().add(1, { from_model: from ?? 'default', to_model: to });
+}
 
 export interface ControlActionContext {
   /** Free-text reason recorded to the audit log. */
@@ -53,6 +96,9 @@ export async function executeControlAction(
 
   if (applied) {
     await store.setAgentState(next);
+    if (action === 'switch_model') {
+      recordModelSwitchMarker(current.activeModel, next.activeModel ?? '', context.reason);
+    }
   }
 
   await store.recordAction(toLogEntry(action, applied, context));
