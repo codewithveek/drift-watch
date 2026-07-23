@@ -1,0 +1,68 @@
+---
+title: How it works
+description: The perceive, reason, act loop — request flow, what gets traced, and how drift detection and autopilot fit together.
+---
+
+DriftWatch has one idea: **instrument an agent's decisions as telemetry, then
+run a model over that telemetry to notice — and act on — behavioral change.**
+
+Three stages: **perceive** (observe every decision), **reason** (detect drift),
+**act** (remediate, with a human in the loop).
+
+## Request flow
+
+![A diagram showing the DriftWatch architecture flow](/driftwatch-architect-diagram.png)
+
+Each `/run` executes a tool-use loop and, in the same pass, emits the telemetry
+that later feeds drift detection. Nothing is bolted on after the fact — the
+observability *is* the execution path.
+
+## Perceive — what gets traced
+
+One root span per task, `agent.run`, carries the task id, the tools used, the
+token spend, and the provider/model. Inside it, each model step is a
+`gen_ai.step` span and each tool call is a `tool.<name>` span. Three
+low-cardinality metrics (`agent.tool.calls`, `agent.tool.duration`,
+`agent.tokens`) aggregate the same activity for charting and drift.
+
+Details and dashboard queries: [signoz.md](/docs/signoz#what-driftwatch-emits).
+
+## Reason — detecting drift
+
+`detectBehavioralDrift` compares two time windows (baseline vs. current),
+diffs the agent's behavior — tool-call mix, error rate, p95 latency, token spend
+— and asks the model to classify whether it drifted enough to warrant a human
+alert. The verdict is schema-typed (`drift`, `severity`, `reasons`,
+`recommended_action`), not free text. A dry-run mode uses fixtures so you can
+see the whole path before any real traffic exists.
+
+Details: [sdk.md](/docs/sdk#3-detect-behavioral-drift).
+
+## Act — two control loops
+
+**Loop 1 — inline guardrails** (synchronous, per request). A hard token/cost cap
+enforced *inside* the agent loop, aborting a single runaway call mid-flight —
+before it can even pollute the drift windows.
+
+**Loop 2 — autopilot** (asynchronous, aggregate). A scheduler detects drift each
+cycle, evaluates your policy, then dispatches actions: notifications fire
+immediately; control actions (pause, rollback, throttle, switch model) create an
+**approval** a human resolves from Slack, Telegram, or the console. Approvals are
+atomic and channel-agnostic — the first response anywhere wins — and multiple
+server processes coordinate through Redis with a leader lock so exactly one runs
+each cycle. It ships in a safe shadow mode that logs intended actions without
+taking them.
+
+Details: [alerts-and-actions.md](/docs/alerts-and-actions).
+
+## What you bring
+
+DriftWatch owns the observability and control machinery; you bring the parts
+that are specific to your agent:
+
+- **A model client** — any [AI SDK](https://ai-sdk.dev) provider. No provider is
+  bundled or chosen for you. ([server.md](/docs/server#the-model-client))
+- **Tools** — your own skills, wrapped so each call is traced and counted.
+  ([server.md](/docs/server#your-tools-skills))
+- **Config** — typed and validated; from env, or built however your app manages
+  config. ([configuration.md](/docs/configuration))

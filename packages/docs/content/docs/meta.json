@@ -1,0 +1,16 @@
+{
+  "title": "DriftWatch",
+  "pages": [
+    "index",
+    "quickstart",
+    "architecture",
+    "sdk",
+    "server",
+    "console",
+    "signoz",
+    "alerts-and-actions",
+    "configuration",
+    "deployment",
+    "security"
+  ]
+}

@@ -1,0 +1,176 @@
+---
+title: Quickstart
+description: Get DriftWatch running with Docker and produce your first drift report.
+---
+
+Get DriftWatch running and produce your first drift report. The fastest path
+is Docker — no build step, one container.
+
+<Callout title="Building the code instead?">
+  Adding tools, changing the model wiring, running tests? Skip to [Running from
+  source](#running-from-source).
+</Callout>
+
+## 1. Configure
+
+Clone the repo (you build the image from it) and create your `.env` from the
+template:
+
+```bash
+git clone https://github.com/codewithveek/drift-watch.git && cd drift-watch
+cp packages/server/.env.example packages/server/.env
+```
+
+DriftWatch needs one thing to do useful work: a model provider key. Everything
+else has a safe default. Open `packages/server/.env` and set:
+
+- `QWEN_API_KEY` — your model key. The default deployment targets **Qwen Cloud**
+  (an OpenAI-compatible endpoint). To use Anthropic, OpenAI, Google, or a local
+  model instead, see [server.md → Model client](/docs/server#the-model-client).
+- `AUTH_TOKEN` — a secret of your choosing. Clients must send it as
+  `Authorization: Bearer <token>`. Leave it empty only for local experiments —
+  see [security.md](/docs/security#authentication).
+
+To send telemetry to SigNoz now, also set `OTEL_EXPORTER_OTLP_ENDPOINT`,
+`OTEL_EXPORTER_OTLP_HEADERS`, `SIGNOZ_URL`, and `SIGNOZ_API_KEY` — the
+[SigNoz guide](/docs/signoz) walks through exactly where each value comes from.
+You can skip this for now and still try everything below via dry-run mode.
+
+## 2. Run
+
+From a clone of the repo (the build context is the repo root):
+
+```bash
+docker build -f packages/server/Dockerfile -t driftwatch .
+docker run --rm -p 3000:3000 --env-file packages/server/.env driftwatch
+```
+
+The image bundles the server **and** the operator console. When it's up:
+
+```bash
+curl localhost:3000/health          # → {"ok":true}
+```
+
+For a full stack (DriftWatch + Redis for shared state) in one command, use the
+compose file — see [deployment.md](/docs/deployment#docker-compose-the-standard-path).
+
+## 3. Drive traffic
+
+Send the agent a task. Each `/run` call executes a tool-use loop and returns
+exactly what happened — no tracing backend required to see the result:
+
+```bash
+curl -XPOST localhost:3000/run \
+  -H "authorization: Bearer $AUTH_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"weather in Lagos, then search docs for onboarding"}'
+```
+
+```json
+{
+  "output": "It's 24°C in Lagos. Found 3 onboarding docs.",
+  "usage": {
+    "taskId": "b3f1…e2",
+    "stepCount": 3,
+    "skillsUsed": ["get_weather", "search_docs"],
+    "tokenUsage": { "inputTokens": 812, "outputTokens": 96, "totalTokens": 908 },
+    "providerName": "openai.responses",
+    "modelIdentifier": "qwen3.5-plus"
+  }
+}
+```
+
+**What you get:** the task's id, how many steps it took, which tools it called,
+and the exact token spend — per request, in the response body. The same data is
+also emitted as OpenTelemetry traces and metrics for the drift detector and for
+SigNoz.
+
+To generate enough signal for a meaningful drift report, send a batch. The seed
+script deliberately shifts the tool-call mix partway through, so there's a real
+change to detect:
+
+```bash
+# from a repo clone
+BASE_URL=http://localhost:3000 AUTH_TOKEN=$AUTH_TOKEN pnpm seed 40
+```
+
+## 4. Get a drift report
+
+The drift detector queries two time windows (baseline vs. current), diffs the
+agent's behavior, and asks the model to classify whether it has drifted enough
+to warrant a human alert:
+
+```bash
+curl localhost:3000/drift -H "authorization: Bearer $AUTH_TOKEN"
+```
+
+```json
+{
+  "currentWindowStats": {
+    "totalCalls": 28,
+    "errorRate": 0,
+    "toolMix": { "get_weather": 0.71, "search_docs": 0.29 },
+    "p95LatencyMs": 210,
+    "tokenSpend": 26903
+  },
+  "verdict": {
+    "drift": true,
+    "severity": "medium",
+    "reasons": ["search_docs share 40% → 75%", "token spend 12k → 27k"],
+    "recommended_action": "Investigate the search_docs regression."
+  }
+}
+```
+
+<Callout type="info" title="No SigNoz yet?">
+  Use the built-in fixtures — a baseline and a shifted "current" window — to
+  see the full detection + verdict path with zero infrastructure:
+
+  ```bash
+  curl 'localhost:3000/drift' -H "authorization: Bearer $AUTH_TOKEN"   # with DRIFT_DRY_RUN=1 in .env
+  ```
+</Callout>
+
+## 5. See it in SigNoz
+
+Once telemetry is flowing, open your SigNoz **Services** tab and click
+`driftwatch` to see request rate, latency, and errors; open **Traces** to
+inspect a single task's full decision chain by `agent.task_id`. The
+[SigNoz guide](/docs/signoz) shows exactly what to look at and the queries that
+power drift detection.
+
+## 6. Turn on alerts and autopilot (optional)
+
+DriftWatch can act on drift — notify Slack/Telegram, or pause/rollback the agent
+with a human approving from any channel. It ships **off** and, when enabled,
+starts in a safe shadow mode that logs intended actions without taking them.
+See [alerts-and-actions.md](/docs/alerts-and-actions).
+
+---
+
+## Running from source
+
+For contributors, or anyone customizing tools / the model client / policies.
+Requires **Node ≥ 22** and **pnpm ≥ 9**.
+
+```bash
+git clone https://github.com/codewithveek/drift-watch.git driftwatch
+cd driftwatch
+pnpm install
+cp packages/server/.env.example packages/server/.env   # then edit it
+pnpm dev                                                # server + console, hot reload
+```
+
+- `pnpm dev` runs the server (`:3000`) and the console dev server together.
+- `pnpm --filter @driftwatch/server test` runs the test suite.
+- `pnpm drift:dry-run` prints a fixture-backed drift report without a running
+  server — handy in CI.
+
+## What's next
+
+- [server.md](/docs/server) — the HTTP surface, model client, and your own tools.
+- [signoz.md](/docs/signoz) — connect SigNoz (self-hosted or Cloud) and read the data.
+- [alerts-and-actions.md](/docs/alerts-and-actions) — policies, channels, approvals.
+- [console.md](/docs/console) — the operator console.
+- [configuration.md](/docs/configuration) — every environment variable.
+- [deployment.md](/docs/deployment) — production Docker, compose, and the checklist.
