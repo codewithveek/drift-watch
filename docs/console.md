@@ -2,9 +2,9 @@
 
 The console is the operator's window into a running agent: its live health, the
 drift verdicts as they land, the queue of actions waiting for a human decision,
-and a full audit log of everything Autopilot has done. It's where you approve or
-reject a pause, watch a rollout in shadow mode, or check why the agent got
-throttled at 3am.
+and a full audit log of every action Autopilot has taken. Use it to approve or
+reject a pause, watch a rollout in shadow mode, or find out why Autopilot
+throttled the agent overnight.
 
 It's a browser app served **by the server** at `/console/` — there's nothing
 separate to deploy. The Docker image builds and bundles it automatically.
@@ -39,8 +39,8 @@ the same approval, and the first response anywhere wins.
 
 **Drift verdicts** — the running feed of drift reports: for each cycle, whether
 drift was detected, the severity, the reasons, and the baseline-vs-current token
-spend. This is the history that tells you whether the agent's behavior has been
-stable or wandering.
+spend. This history tells you whether the agent's behavior has stayed stable or
+changed over time.
 
 **Action & audit log** — every action Autopilot took or *would have* taken:
 notifications sent, approvals created and resolved (with who approved and via

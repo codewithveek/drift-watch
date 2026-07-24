@@ -14,8 +14,8 @@ description: Auth model, rate limiting, webhook signature verification, telemetr
   recover the token byte by byte.
 - **`AUTH_TOKEN` unset (local-only mode)** — the server refuses everything
   outside RFC 1918 private ranges: `10.0.0.0/8`, `172.16.0.0/12`,
-  `192.168.0.0/16`, plus loopback. This exists because model calls cost
-  real money — there's no anonymous-by-accident path to production.
+  `192.168.0.0/16`, plus loopback. Model calls cost real money, so this
+  prevents accidental anonymous access in production.
 
 `request.ip` is what this check keys on, which means **`TRUST_PROXY` must
 be set correctly** — if the server sits behind a reverse proxy and

@@ -14,7 +14,7 @@ docker build -f packages/server/Dockerfile -t driftwatch .
 docker run --rm -p 3000:3000 --env-file packages/server/.env driftwatch
 ```
 
-The image is production-ready out of the box:
+The image is production-ready by default:
 
 - Multi-stage build — the build toolchain never ships in the runtime image.
 - Runs as a non-root user.

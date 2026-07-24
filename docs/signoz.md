@@ -185,9 +185,9 @@ name and any self-hosted transport options.)
 deterministic trigger — it runs every cycle, compares two windows, and decides
 whether to alert or act. The SigNoz MCP server is the *interactive* layer — a
 human (or their assistant) exploring *why*, on demand, with the full richness of
-traces/metrics/logs. They answer different questions, which is why DriftWatch
-doesn't ship an MCP server of its own: querying telemetry is exactly what
-SigNoz's already does, for free.
+traces/metrics/logs. They answer different questions. DriftWatch therefore does
+not ship an MCP server of its own: SigNoz's MCP already queries the telemetry,
+at no extra cost.
 
 ## Other OpenTelemetry backends
 

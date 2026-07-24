@@ -21,8 +21,14 @@ before a quiet regression becomes an incident or a bill.
 
 ## Start here
 
-1. **[Quickstart](./quickstart.md)** — run it with Docker and get your first
-   drift report in minutes.
+Two ways in:
+
+- **[Add the SDK to your agent](./sdk.md)** — `@driftwatch/sdk` is DriftWatch.
+  Install it, pass it your model and tools, and the agent traces itself, detects
+  drift, and enforces guardrails.
+- **[Run the reference server](./quickstart.md)** — try the whole system with
+  Docker in minutes: the `/run` and `/drift` endpoints, Autopilot, and the
+  console.
 
 ## Guides
 

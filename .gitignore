@@ -9,3 +9,8 @@ coverage
 .vscode
 .idea
 *.tsbuildinfo
+
+# SigNoz Foundry generated deployment (regenerable from casting.yaml + .lock
+# via `foundryctl forge`/`cast`). casting.yaml and casting.yaml.lock ARE tracked.
+pours/
+.next

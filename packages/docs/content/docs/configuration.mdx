@@ -101,7 +101,7 @@ The drift-triggered remediation loop and its channels. All server-owned.
 | `AUTOPILOT_ENABLED` | `autopilotEnabled` | `false` (`'1'` → `true`) | Master switch for the autonomous scheduler. |
 | `AUTOPILOT_MODE` | `autopilotMode` | `shadow` | `shadow` logs intended actions only; `enforce` dispatches notifications and queues control actions for approval. |
 | `AUTOPILOT_SCAN_INTERVAL_MS` | `scanIntervalMs` | `60000` | How often the scheduler runs a drift cycle (also the leader-lock TTL). |
-| `AUTOPILOT_COOLDOWN_MS` | `cooldownMs` | `300000` | Dedup window so the same action doesn't re-fire in a storm. |
+| `AUTOPILOT_COOLDOWN_MS` | `cooldownMs` | `300000` | Dedup window so the same action does not re-fire repeatedly during a burst of drift. |
 | `AUTOPILOT_APPROVAL_TIMEOUT_MS` | `approvalTimeoutMs` | `600000` | How long a pending control-action approval waits before the safe default applies. |
 | `AUTOPILOT_APPROVAL_TIMEOUT_DECISION` | `approvalTimeoutDecision` | `rejected` | Safe default applied on approval timeout. |
 | `AUTOPILOT_SWITCH_MODEL_TO` | `switchModelTo` | `MODEL_FALLBACK` | Model id an approved `switch_model` action switches the agent to. Must be a key in `model-client.ts`'s registry. See [alerts-and-actions.md → Model switching](/docs/alerts-and-actions#model-switching-self-healing-cost--reliability). |

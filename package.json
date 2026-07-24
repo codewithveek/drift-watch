@@ -2,7 +2,7 @@
   "name": "driftwatch-workspace",
   "version": "0.2.0",
   "private": true,
-  "description": "Workspace root for DriftWatch: a self-observing AI agent SDK (packages/sdk) and its reference Fastify server (packages/server).",
+  "description": "Workspace root for DriftWatch: a self-observing AI agent SDK (packages/sdk), notifier/webhook companion (packages/autopilot), a reference Fastify server (packages/server), a Next.js console (packages/console), and docs (packages/docs).",
   "license": "MIT",
   "author": "Victory Lucky",
   "repository": {

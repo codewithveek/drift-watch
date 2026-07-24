@@ -1,34 +1,24 @@
 # The SDK — `@driftwatch/sdk`
 
-`@driftwatch/sdk` is the reusable core. If you already have an
-[AI SDK](https://ai-sdk.dev) agent, you can add DriftWatch's observability,
-drift detection, and guardrails to it **without** the reference server — the SDK
-is a library you call from your own code.
+`@driftwatch/sdk` is DriftWatch. It is a library you add to an
+[AI SDK](https://ai-sdk.dev) agent to make the agent self-observing. The SDK
+traces every model step and tool call, detects behavioral drift, and enforces
+per-request guardrails.
 
-It bundles no AI provider SDKs and reads no environment variables on its own:
-every function takes a model client, tools, and typed config as parameters. You
-stay in control of which provider you use and where config comes from.
+The SDK bundles no AI provider SDKs. It reads no environment variables. You pass
+it a model client, tools, and typed config as parameters. You choose the
+provider. You choose where the config comes from.
 
 ```bash
 npm install @driftwatch/sdk ai zod
 npm install @ai-sdk/openai   # or @ai-sdk/anthropic, @ai-sdk/google, …
 ```
 
-## When to use the SDK directly
+The reference [server](./server.md) and [console](./console.md) are built on
+this SDK. Use them to try DriftWatch without writing code, or as a blueprint for
+your own service.
 
-- You have an existing AI SDK app and want **self-observing** telemetry
-  (traces + the `agent.*` metrics) with a couple of function calls.
-- You want **behavioral drift detection** over your agent's telemetry, run on
-  your own schedule (a cron, a queue worker, a serverless function).
-- You want **inline guardrails** — a hard per-request token/cost cap enforced
-  mid-loop — without adopting the whole server.
-- You're building a **different control surface** than the reference server and
-  just want the detection + policy primitives.
-
-If instead you want a ready-to-run HTTP service with alerts, approvals, and a
-console, use the [server](./server.md) — it's built on exactly these functions.
-
-## The five things it does
+## What the SDK does
 
 ### 1. Run an instrumented agent task
 
