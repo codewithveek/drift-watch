@@ -1,6 +1,6 @@
 {
   "name": "@driftwatch/sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Self-observing AI agent SDK: OpenTelemetry instrumentation for AI SDK agents plus an LLM-over-traces behavioral drift detector. Bring your own model client — no provider SDKs bundled.",
   "type": "module",
   "license": "MIT",

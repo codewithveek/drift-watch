@@ -1,6 +1,6 @@
 {
   "name": "@driftwatch/autopilot",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Slack, Telegram, and generic-webhook notifiers plus inbound-webhook signature verification for DriftWatch Autopilot. Companion to @driftwatch/sdk — bring these in only if you use those channels.",
   "type": "module",
   "license": "MIT",
