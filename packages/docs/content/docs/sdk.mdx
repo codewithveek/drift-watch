@@ -1,0 +1,347 @@
+---
+title: SDK
+description: "@driftwatch/sdk — add self-observing telemetry, drift detection, guardrails, and the full Autopilot loop to your own AI SDK agent."
+---
+
+`@driftwatch/sdk` is a library you add to an
+[AI SDK](https://ai-sdk.dev) agent to make the agent self-observing. The SDK
+traces every model step and tool call, detects behavioral drift, and enforces
+per-request guardrails.
+
+The SDK bundles no AI provider SDKs. It reads no environment variables on its
+own. You pass it a model client, tools, and typed config as parameters. You
+choose the provider. You choose where the config comes from.
+
+The reference [server](/docs/server) and [console](/docs/console) are built on
+this SDK. Use them to try DriftWatch without writing code, or as a blueprint for
+your own service.
+
+## Get started
+
+### 1. Install
+
+Install the SDK, the AI SDK, and one provider package for your model.
+
+```bash
+npm install @driftwatch/sdk ai zod
+npm install @ai-sdk/openai   # or @ai-sdk/anthropic, @ai-sdk/google, …
+```
+
+### 2. Configure
+
+Every SDK function takes typed config. You build that config in one of two ways.
+
+**Option A — set environment variables** and let `loadDriftWatchConfigFromEnv()`
+read them:
+
+```bash title=".env"
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+PROMETHEUS_URL=http://localhost:9090
+AGENT_MAX_STEPS=8
+
+# Read by your provider package (@ai-sdk/openai), not by the SDK itself.
+OPENAI_API_KEY=sk-...
+```
+
+```ts
+import { loadDriftWatchConfigFromEnv } from '@driftwatch/sdk';
+
+const config = loadDriftWatchConfigFromEnv(); // reads process.env
+```
+
+**Option B — build the config object yourself** and validate it against the same
+schema:
+
+```ts
+import { DriftWatchConfigSchema } from '@driftwatch/sdk';
+
+const config = DriftWatchConfigSchema.parse({
+  telemetry: { serviceName: 'my-agent' },
+  agent: { maxSteps: 8 },
+  driftDetection: { prometheusBaseUrl: 'http://localhost:9090' },
+});
+```
+
+<Callout type="warn" title="Load your .env before you read it">
+  `loadDriftWatchConfigFromEnv()` reads `process.env`. If you keep values in a
+  `.env` file, load them first: add `import 'dotenv/config'` as the very first
+  line of your entry file, or start the process with `node --env-file=.env`.
+  Otherwise the values are not in `process.env` yet, and you get the defaults.
+</Callout>
+
+Every field and its environment variable is listed in
+[Configuration](/docs/configuration#sdk-config--driftwatchconfig).
+
+### 3. Start telemetry
+
+`bootstrapTelemetry` starts OpenTelemetry and sends traces, metrics, and logs to
+any OTLP-compatible backend. It must run **before** your application code, in a
+**separate file**, loaded with `--import`. This is not a style choice: OpenTelemetry
+instruments modules (`fetch`, `http`, …) by patching them the moment they load. If
+your application file has already imported those modules by the time
+`bootstrapTelemetry` runs, the patch is too late, and nothing is captured.
+
+```ts title="telemetry.ts"
+import 'dotenv/config'; // load .env into process.env before anything reads it
+import { bootstrapTelemetry, loadDriftWatchConfigFromEnv } from '@driftwatch/sdk';
+
+bootstrapTelemetry(loadDriftWatchConfigFromEnv().telemetry);
+```
+
+With no `OTEL_EXPORTER_OTLP_ENDPOINT` set, this defaults to
+`http://localhost:4318`. If nothing is listening there, the exporter logs a
+connection failure and your agent keeps running — it never blocks on export. See
+[Prometheus & OpenTelemetry](/docs/prometheus) to point this at a real backend.
+
+### 4. Run an agent task
+
+`runAgentTask` runs a traced tool-use loop. Give it a model and tools. It returns
+the result and a usage summary, and — because `telemetry.ts` already started
+OpenTelemetry — emits the `agent.run` trace and `agent.tool.*` metrics as it goes.
+
+The example below is runnable. The tool calls GitHub's public API, which needs no
+key; only the model needs a key.
+
+```ts title="agent.ts"
+import { runAgentTask, loadDriftWatchConfigFromEnv } from '@driftwatch/sdk';
+import { openai } from '@ai-sdk/openai';
+import { tool } from 'ai';
+import { z } from 'zod';
+
+const config = loadDriftWatchConfigFromEnv();
+
+// A tool the agent can call. This one hits GitHub's public API — no key needed.
+const tools = {
+  get_repo: tool({
+    description: 'Get public information about a GitHub repository',
+    inputSchema: z.object({ owner: z.string(), repo: z.string() }),
+    execute: async ({ owner, repo }) => {
+      const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+        headers: { 'user-agent': 'driftwatch-demo' },
+      });
+      const data = await res.json();
+      return { stars: data.stargazers_count, language: data.language };
+    },
+  }),
+};
+
+const result = await runAgentTask({
+  prompt: 'How many stars does vercel/next.js have, and what language is it in?',
+  modelClient: openai('gpt-4o-mini'), // any AI SDK provider; needs its API key
+  tools,
+  maxSteps: config.agent.maxSteps,
+});
+
+console.log(result.responseText);
+console.log(result.skillsUsed, result.tokenUsage);
+```
+
+Run `agent.ts` with `telemetry.ts` preloaded ahead of it. `dotenv/config` in
+`telemetry.ts` already loads `.env`, including `OPENAI_API_KEY`, so this command
+is the same on macOS, Linux, and Windows:
+
+```bash
+npx tsx --import ./telemetry.ts ./agent.ts
+```
+
+You get the model's answer and the exact usage for that call:
+
+```text
+vercel/next.js has 129,304 stars and is written in JavaScript.
+[ 'get_repo' ] { inputTokens: 812, outputTokens: 94, totalTokens: 906 }
+```
+
+`runAgentTask` returns the response text, the task id (searchable in your tracing
+backend), which tools ran, the step count, and exact token usage — per call, with
+no round trip to a backend. With telemetry flowing, the same call also lands in
+your OTel backend as a trace within moments — see
+[Verify it's flowing](/docs/prometheus#verify-its-flowing).
+
+## Instrument your own tools
+
+Wrap a tool's `execute` in `withSkillExecutionSpan`. Every call then produces a
+`tool.<name>` span and increments the `agent.tool.calls` and
+`agent.tool.duration` metrics. These are the signals the drift detector reads.
+Use this for any tool — a database lookup, an HTTP call, a vector search:
+
+```ts
+import { withSkillExecutionSpan } from '@driftwatch/sdk';
+import { tool } from 'ai';
+import { z } from 'zod';
+
+const get_repo = tool({
+  description: 'Get public information about a GitHub repository',
+  inputSchema: z.object({ owner: z.string(), repo: z.string() }),
+  execute: (input) =>
+    withSkillExecutionSpan({
+      skillName: 'get_repo',
+      skillInput: input,
+      executeSkill: async () => {
+        const res = await fetch(
+          `https://api.github.com/repos/${input.owner}/${input.repo}`,
+          { headers: { 'user-agent': 'driftwatch-demo' } },
+        );
+        const data = await res.json();
+        return { stars: data.stargazers_count, language: data.language };
+      },
+    }),
+});
+```
+
+## Detect behavioral drift
+
+`detectBehavioralDrift` queries two time windows through a `MetricsQuerySource`
+you provide. It diffs the agent's behavior — tool mix, error rate, p95 latency,
+token spend. It then asks your model to classify whether the agent drifted, and
+returns a schema-typed verdict:
+
+```ts
+import { detectBehavioralDrift, PrometheusMetricsSource } from '@driftwatch/sdk';
+
+const report = await detectBehavioralDrift({
+  modelClient: openai('gpt-4o-mini'),
+  metricsQuerySource: new PrometheusMetricsSource({
+    baseUrl: config.driftDetection.prometheusBaseUrl,
+    bearerToken: config.driftDetection.prometheusBearerToken || undefined,
+  }),
+});
+
+console.log(report.verdict);
+// {
+//   drift: true,
+//   severity: 'medium',
+//   reasons: ['error rate 1% → 8%', 'p95 latency 210ms → 680ms'],
+//   recommended_action: 'Investigate the rising error rate before it spreads.'
+// }
+```
+
+`PrometheusMetricsSource` is the SDK's built-in `MetricsQuerySource` — it
+queries any Prometheus-compatible `/api/v1/query` API (Prometheus itself,
+Grafana Mimir/Cortex/Thanos, ...). Targeting a different metrics backend
+instead? Implement `MetricsQuerySource` yourself and pass that.
+
+Pass `isDryRun: true` to skip the metrics source entirely and use built-in
+fixtures — a baseline window and a shifted "current" window. This lets you
+test the verdict path before any real traffic exists, which is useful for
+demos and CI. (`metricsQuerySource` is required unless `isDryRun` is `true`.)
+
+The judge drives the model with `generateText` and parses its JSON defensively.
+It retries up to 3 times (reported as `report.judgeAttempts`), so it works even
+with providers whose structured-output support is unreliable.
+
+## Enforce inline guardrails
+
+Pass `guardrails` to `runAgentTask` for a hard, per-request cap. Drift detection
+is aggregate and after-the-fact. A guardrail is synchronous: it stops a single
+runaway call mid-loop, before the call finishes.
+
+```ts
+const result = await runAgentTask({
+  prompt,
+  modelClient: openai('gpt-4o-mini'),
+  tools,
+  maxSteps: config.agent.maxSteps,
+  guardrails: {
+    maxTokensPerTask: 40_000,   // 0 disables this check
+    maxCostUsd: 0.5,            // 0 disables; derived from the prices below
+    pricePer1kInput: 0.005,
+    pricePer1kOutput: 0.015,
+    onExceed: 'stop',           // 'stop' halts mid-loop; 'flag' finishes and marks it
+  },
+});
+
+if (result.guardrailTriggered) {
+  console.warn('guardrail hit:', result.guardrailReason);
+}
+```
+
+## Run the full Autopilot loop
+
+Drift detection is the *perceive* step. The SDK also contains the *reason → act*
+orchestration: `ApprovalService`, `AutopilotScheduler`, `executeControlAction`,
+and the notify-dispatch helpers. Together they give you the whole
+notify/approve/act loop, not just the detector. None of it does concrete I/O. It
+runs on the `StateStore` and `Notifier` interfaces, which you supply.
+
+```ts
+import {
+  MemoryStateStore,
+  ApprovalService,
+  AutopilotScheduler,
+  PolicyConfigSchema,
+  PrometheusMetricsSource,
+  type NotifierRegistry,
+} from '@driftwatch/sdk';
+
+const store = new MemoryStateStore();             // or RedisStateStore, below
+const notifiers: NotifierRegistry = { list: [] }; // add real channels, below
+
+const approvalService = new ApprovalService({
+  store,
+  notifiers,
+  approvalTimeoutMs: 600_000,
+  timeoutDecision: 'rejected', // a missed approval fails closed
+});
+
+const scheduler = new AutopilotScheduler({
+  store,
+  notifiers,
+  approvalService,
+  modelClient: openai('gpt-4o-mini'),
+  policyConfig: PolicyConfigSchema.parse({
+    rules: [{ when: { severity: 'high' }, do: ['notify_slack', 'pause_agent'] }],
+    mode: 'shadow', // start here — logs intended actions, executes nothing
+  }),
+  metricsQuerySource: new PrometheusMetricsSource({
+    baseUrl: config.driftDetection.prometheusBaseUrl,
+    bearerToken: config.driftDetection.prometheusBearerToken || undefined,
+  }),
+  isDryRun: false,
+  scanIntervalMs: 60_000,
+  cooldownMs: 300_000,
+  logger: console,
+});
+
+scheduler.start();
+```
+
+**State store.** `MemoryStateStore` is the zero-dependency, single-process
+default. For a multi-process deployment, use `RedisStateStore`. It lives at the
+isolated subpath `@driftwatch/sdk/redis`, so importing the SDK's package root
+never pulls in `ioredis`. Only code that imports this subpath needs it:
+
+```ts
+import { RedisStateStore } from '@driftwatch/sdk/redis';
+
+const store = new RedisStateStore(process.env.REDIS_URL!);
+```
+
+**Notifiers.** The SDK defines the `Notifier` interface and the dispatch helpers
+(`notifyAll`, `safeNotify`, `notifierForAction`). It contains no concrete channels.
+Slack, Telegram, and generic-webhook notifiers live in the companion
+[`@driftwatch/autopilot`](https://drift-watch-docs.vercel.app/docs/alerts-and-actions#channels)
+package. You can also bring your own by implementing `Notifier`. See
+[Alerts & Actions](/docs/alerts-and-actions) for the policy format and channel
+setup.
+
+## Export telemetry
+
+`telemetry.ts` from [Get started](#3-start-telemetry) is the whole setup.
+`bootstrapTelemetry` exports traces, metrics, and logs over OTLP/HTTP. Metrics
+use **cumulative** temporality (the OTel default), which is what PromQL's
+`increase()`/`rate()` — and so `PrometheusMetricsSource` — expect. Logs carry
+`trace_id` and `span_id` for trace-to-log correlation. The
+[Prometheus guide](/docs/prometheus#what-driftwatch-emits) lists every signal
+it produces.
+
+In production, compile `telemetry.ts` and preload it with `node` the same way:
+
+```bash
+node --import ./dist/telemetry.js ./dist/app.js
+```
+
+<Callout type="warn" title="Import order matters">
+  Call `bootstrapTelemetry` before your other imports, in its own file, loaded
+  with `--import`. If you call it later — from inside your normal import graph —
+  the instruments bind before the provider is ready and record nothing.
+</Callout>

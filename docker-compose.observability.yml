@@ -1,0 +1,81 @@
+# Full local stack: DriftWatch (server, with the console bundled in — see
+# packages/server/Dockerfile) + Redis + an OTel Collector + Prometheus, all on
+# one compose network. Use this when you want the drift detector's live
+# (non-dry-run) path working end to end without wiring up your own
+# observability backend first.
+#
+#   docker compose -f docker-compose.observability.yml up -d --build
+#
+# The collector receives OTLP from DriftWatch and re-exposes metrics as a
+# Prometheus scrape target (see observability/otel-collector/); Prometheus
+# scrapes that target (see observability/prometheus/) and is what
+# PROMETHEUS_URL points at. Traces/logs only go to the collector's `debug`
+# exporter (stdout) here — swap in Tempo/Loki/Jaeger/etc. in
+# observability/otel-collector/otel-collector-config.yaml if you want them
+# stored, not just printed.
+#
+# This deployment targets Qwen Cloud's OpenAI-compatible endpoint (see
+# packages/server/src/config/model-client.ts); supply QWEN_API_KEY.
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - driftwatch-redis:/data
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./observability/otel-collector/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - driftwatch-prometheus:/prometheus
+    depends_on:
+      - otel-collector
+    restart: unless-stopped
+
+  driftwatch:
+    build:
+      context: .
+      dockerfile: packages/server/Dockerfile
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      PROMETHEUS_URL: http://prometheus:9090
+      PROMETHEUS_BEARER_TOKEN: ${PROMETHEUS_BEARER_TOKEN:-}
+      # --- model client (Qwen Cloud, OpenAI-compatible) ---
+      QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      MODEL: ${MODEL:-qwen3.7-max}
+      AUTH_TOKEN: ${AUTH_TOKEN:-}
+      # --- shared state (multi-process): point autopilot at the Redis above ---
+      REDIS_URL: redis://redis:6379
+      # --- autopilot (drift-triggered remediation loop) ---
+      AUTOPILOT_ENABLED: ${AUTOPILOT_ENABLED:-0}
+      AUTOPILOT_MODE: ${AUTOPILOT_MODE:-shadow}
+      AUTOPILOT_SCAN_INTERVAL_MS: ${AUTOPILOT_SCAN_INTERVAL_MS:-60000}
+      AUTOPILOT_APPROVAL_TIMEOUT_MS: ${AUTOPILOT_APPROVAL_TIMEOUT_MS:-600000}
+      AUTOPILOT_POLICIES: ${AUTOPILOT_POLICIES:-}
+      # --- notification / approval channels ---
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_SECRET_TOKEN: ${TELEGRAM_SECRET_TOKEN:-}
+      DRIFT_WEBHOOK_URL: ${DRIFT_WEBHOOK_URL:-}
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - redis
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  driftwatch-redis:
+  driftwatch-prometheus:

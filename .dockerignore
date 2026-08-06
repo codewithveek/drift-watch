@@ -1,0 +1,13 @@
+**/node_modules
+**/dist
+.git
+.github
+**/*.log
+**/.env
+**/.env.*
+!**/.env.example
+**/coverage
+.vscode
+.idea
+README.md
+LICENSE

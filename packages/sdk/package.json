@@ -1,0 +1,85 @@
+{
+  "name": "@driftwatch/sdk",
+  "version": "0.4.0",
+  "description": "Self-observing AI agent SDK: OpenTelemetry instrumentation for AI SDK agents plus an LLM-over-traces behavioral drift detector. Bring your own model client — no provider SDKs bundled.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Victory Lucky",
+  "homepage": "https://github.com/codewithveek/drift-watch#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codewithveek/drift-watch.git",
+    "directory": "packages/sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/codewithveek/drift-watch/issues"
+  },
+  "keywords": [
+    "ai-agent",
+    "opentelemetry",
+    "observability",
+    "telemetry",
+    "drift-detection",
+    "ai-sdk",
+    "llm",
+    "vercel-ai-sdk",
+    "otel"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./redis": {
+      "types": "./dist/redis.d.ts",
+      "import": "./dist/redis.js"
+    }
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "pnpm build && pnpm test"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.78.0",
+    "@opentelemetry/exporter-logs-otlp-proto": "^0.220.0",
+    "@opentelemetry/exporter-metrics-otlp-proto": "^0.220.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.220.0",
+    "@opentelemetry/resources": "^2.9.0",
+    "@opentelemetry/sdk-logs": "^0.220.0",
+    "@opentelemetry/sdk-metrics": "^2.9.0",
+    "@opentelemetry/sdk-node": "^0.220.0",
+    "@opentelemetry/semantic-conventions": "^1.43.0",
+    "ai": "^7.0.31",
+    "zod": "^3.25.76"
+  },
+  "peerDependencies": {
+    "ioredis": "^5.4.1"
+  },
+  "peerDependenciesMeta": {
+    "ioredis": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "ioredis": "^5.4.1",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
+  }
+}

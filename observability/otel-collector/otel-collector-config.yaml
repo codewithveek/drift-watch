@@ -1,0 +1,45 @@
+# OTel Collector config for the DriftWatch reference stack.
+#
+# Receives all three signals over OTLP from the DriftWatch server
+# (packages/sdk/src/telemetry/otel.ts), and re-exposes metrics as a
+# Prometheus scrape target so the drift detector's PrometheusMetricsSource
+# (packages/sdk/src/drift/prometheus-source.ts) has something to query.
+#
+# Traces and logs are only sent to the `debug` exporter here (stdout) — this
+# stack's job is to prove the metrics path end to end, not to be a production
+# tracing/log backend. Point the trace/log pipelines at Tempo, Loki, Jaeger,
+# or any other OTLP-compatible backend you actually run; the collector
+# forwards to as many exporters per pipeline as you list.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  debug:
+    verbosity: basic
+  # Cumulative-temporality counters/histograms (see otel.ts) translate
+  # directly into Prometheus's data model — no conversion processor needed.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+
+processors:
+  batch: {}
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

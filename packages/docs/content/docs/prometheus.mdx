@@ -1,0 +1,173 @@
+---
+title: Prometheus & OpenTelemetry
+description: Connect DriftWatch to Prometheus (or Mimir/Cortex/Thanos) and read the traces, metrics, and logs it emits.
+---
+
+DriftWatch instruments every agent decision as OpenTelemetry — traces, metrics,
+and logs. It exports over standard **OTLP/HTTP**, so any OTel-compatible
+backend can receive it. The drift detector then reads metrics back out through
+a **Prometheus-compatible query API** (`/api/v1/query`) to compute drift, via
+the SDK's built-in `PrometheusMetricsSource` — so a Prometheus-compatible
+backend is both a source of dashboards *and* part of the control loop.
+
+This guide brings up the reference OTel Collector + Prometheus stack, points
+DriftWatch at it, and shows what to look at once data flows.
+
+## Two endpoints, two jobs
+
+This is the one thing to get right. DriftWatch talks to your observability
+stack in **two directions**, and they're different hosts:
+
+| Direction | What | Env vars |
+|---|---|---|
+| **Push** telemetry in | Traces/metrics/logs → an OTel Collector's OTLP receiver | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS` |
+| **Pull** data back out | Drift detector queries a Prometheus-compatible API | `PROMETHEUS_URL`, `PROMETHEUS_BEARER_TOKEN` |
+
+Metrics don't reach Prometheus directly — they go OTLP → Collector → the
+collector's Prometheus exporter → Prometheus scrapes that exporter. `PROMETHEUS_URL`
+points at Prometheus (or Mimir/Cortex/Thanos), never at the collector.
+
+## Run the reference stack
+
+The repo ships a complete local stack —
+[`docker-compose.observability.yml`](https://github.com/codewithveek/drift-watch/blob/main/docker-compose.observability.yml) —
+with DriftWatch, Redis, an OTel Collector, and Prometheus wired together on one
+network:
+
+```bash
+docker compose -f docker-compose.observability.yml up -d --build
+```
+
+- The **collector** ([`observability/otel-collector/otel-collector-config.yaml`](https://github.com/codewithveek/drift-watch/blob/main/observability/otel-collector/otel-collector-config.yaml))
+  receives OTLP on `:4318` and re-exposes metrics on `:8889` for scraping.
+  Traces and logs go to its `debug` exporter (stdout) in this reference
+  config — swap in Tempo/Loki/Jaeger/etc. there if you want them stored
+  rather than just printed.
+- **Prometheus** ([`observability/prometheus/prometheus.yml`](https://github.com/codewithveek/drift-watch/blob/main/observability/prometheus/prometheus.yml))
+  scrapes the collector's `:8889` target. This is what `PROMETHEUS_URL` points
+  at inside the compose network (`http://prometheus:9090`).
+- **DriftWatch** exports OTLP to the collector and queries Prometheus for
+  drift detection — both wired automatically by the compose file.
+
+Deploying on Coolify? [`docker-compose.coolify.yml`](https://github.com/codewithveek/drift-watch/blob/main/docker-compose.coolify.yml)
+is the same topology, adapted for Coolify's networking model — see
+[deployment.md](/docs/deployment#the-observability-stack).
+
+Already run a Prometheus/Mimir/Cortex/Thanos and an OTel Collector elsewhere?
+Point `OTEL_EXPORTER_OTLP_ENDPOINT` at your collector and `PROMETHEUS_URL` at
+your existing query API instead of running this stack — neither file is
+DriftWatch-specific beyond the metric names the collector happens to receive.
+
+## Connecting to a managed backend
+
+`PrometheusMetricsSource` (`packages/sdk/src/drift/prometheus-source.ts`) works
+against anything speaking the Prometheus HTTP query API — including managed
+services like Grafana Cloud (Mimir):
+
+```bash
+PROMETHEUS_URL=https://prometheus-prod-…grafana.net/api/prom
+PROMETHEUS_BEARER_TOKEN=<your-token>
+```
+
+`PROMETHEUS_BEARER_TOKEN` is sent as a standard `Authorization: Bearer <token>`
+header on every query. Leave it empty for a local/self-hosted Prometheus with
+no auth in front of it.
+
+## Verify it's flowing
+
+Send some traffic ([quickstart step 3](/docs/quickstart#3-drive-traffic)),
+generate ~15–20 requests, wait a scrape interval or two, then query Prometheus
+directly:
+
+```bash
+curl 'http://localhost:9090/api/v1/query?query=agent_tool_calls_total' | jq
+```
+
+A non-empty `result` array means metrics are flowing end to end — OTLP export
+→ collector → Prometheus scrape. From there:
+
+- **`curl localhost:3000/drift`** — the live (non-dry-run) drift detector reads
+  exactly this data; a real `currentWindowStats` object back means the whole
+  pull path works.
+- **Prometheus's own UI** (`http://localhost:9090/graph`) — graph
+  `agent_tool_calls_total`, `agent_tool_duration_bucket`, or
+  `agent_tokens_total` directly.
+
+If `agent_tool_calls_total` never appears, it's almost always the push side:
+confirm `OTEL_EXPORTER_OTLP_ENDPOINT` points at the collector (not Prometheus
+itself), and that the collector's own logs show incoming OTLP requests.
+
+## What DriftWatch emits
+
+### Traces — the full decision chain
+
+Every `/run` opens one root span, `agent.run`, with child spans for each model
+step and tool call:
+
+```
+agent.run              task id, skills used, token spend, provider, model
+├─ gen_ai.step         one per LLM call — model, tokens, finish reason
+├─ tool.get_weather    tool latency + outcome (ok/error)
+└─ gen_ai.step
+```
+
+Open any `agent.run` span and read `agent.task_id` to pull that exact task's
+whole trace — every tool it invoked and every token it spent. This is your
+answer to "why did this one request behave this way?"
+
+### Metrics — aggregate behavior over time
+
+Three custom metrics drive drift detection and make good dashboard panels. They
+are **low-cardinality by design** (labels are bounded sets — tool name, outcome,
+provider, model — never a request or task id), so they chart cleanly over time.
+
+| Metric (OTel name) | Prometheus name | Type | Labels | Answers |
+|---|---|---|---|---|
+| `agent.tool.calls` | `agent_tool_calls_total` | counter | `tool`, `outcome` | how often each tool is called, split ok/error |
+| `agent.tool.duration` | `agent_tool_duration_bucket` (+ `_sum`/`_count`) | histogram | `tool` | per-tool latency, incl. p95 regressions |
+| `agent.tokens` | `agent_tokens_total` | counter | `model`, `provider`, `function_id`, `type` | token spend by provider/model/task-type (`agent-run` vs `drift-judge`), input vs output |
+
+Metrics export with **cumulative** temporality (the OTel default) — this is
+what PromQL's `increase()`/`rate()` expect: an ever-growing counter between
+scrapes, not a per-export delta. `PrometheusMetricsSource` builds exactly those
+queries under the hood.
+
+<Callout title="Histogram naming">
+  The OTel-to-Prometheus convention turns a histogram into several series:
+  `agent_tool_duration_bucket`, `_sum`, `_count`. Percentiles (p95) read the
+  `_bucket` series via `histogram_quantile`; an average latency panel is
+  `_sum / _count`.
+</Callout>
+
+### Building dashboard panels
+
+In Prometheus's own UI, Grafana, or any PromQL-speaking dashboard tool:
+
+- **Calls per tool** — `sum by (tool) (increase(agent_tool_calls_total[5m]))`.
+  Add `outcome` to split success vs error.
+- **Token spend by model** — `sum by (model) (increase(agent_tokens_total[1h]))`
+  (or group by `function_id` to separate agent work from drift-judge cost).
+- **Tool latency p95** — `histogram_quantile(0.95, sum by (le, tool) (rate(agent_tool_duration_bucket[5m])))`.
+
+These are the same signals `detectBehavioralDrift` reads — the dashboard shows
+you *what* changed; the drift verdict tells you *whether it matters*.
+
+## Bring your own metrics backend
+
+`detectBehavioralDrift` doesn't know about Prometheus at all — it depends on
+the `MetricsQuerySource` interface (`packages/sdk/src/drift/metrics-source.ts`),
+the same "bring your own concrete implementation" shape as `StateStore`/`Notifier`.
+`PrometheusMetricsSource` is the SDK's one built-in implementation. Targeting
+Datadog, Honeycomb, ClickHouse directly, or anything else instead? Implement
+`MetricsQuerySource` yourself and pass it as `metricsQuerySource` — traces and
+logs keep working over plain OTLP regardless of what you choose for the query
+side.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| No traces/logs anywhere | Push endpoint wrong, or collector not running | Confirm `OTEL_EXPORTER_OTLP_ENDPOINT` points at the collector's `:4318` and check the collector's own logs |
+| Traces show up but `agent_*` metrics never appear in Prometheus | Metrics take a scrape interval or two to become queryable, or the collector's Prometheus exporter isn't scraped | Wait, then confirm `prometheus.yml` targets the collector's metrics port and check Prometheus's **Targets** page |
+| `/drift` returns connection errors | `PROMETHEUS_URL` points at the collector, not Prometheus | Point it at Prometheus's own `:9090` (or your Mimir/Cortex/Thanos query endpoint) |
+| `/drift` returns `401`/`403` | Missing or wrong bearer token for a managed backend | Set `PROMETHEUS_BEARER_TOKEN` |

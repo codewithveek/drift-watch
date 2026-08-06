@@ -1,0 +1,44 @@
+{
+  "name": "@driftwatch/server",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Reference Fastify server for DriftWatch. Demo skills (tools), the bring-your-own model-client wiring point, and the HTTP surface. Imports @driftwatch/sdk for everything reusable.",
+  "author": "Victory Lucky",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node --import ./dist/telemetry-bootstrap.js ./dist/server.js",
+    "dev": "tsx watch --include .env --clear-screen=false --import ./src/telemetry-bootstrap.ts ./src/server.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "drift": "tsx ./src/cli/drift.ts",
+    "agent": "tsx --import ./src/telemetry.ts ./src/agent.ts",
+    "drift:dry-run": "cross-env DRIFT_DRY_RUN=1 tsx ./src/cli/drift.ts",
+    "seed": "tsx ./scripts/seed-traffic.ts",
+    "test": "vitest run"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@ai-sdk/openai": "^4.0.16",
+    "@driftwatch/autopilot": "workspace:*",
+    "@driftwatch/sdk": "workspace:*",
+    "@fastify/rate-limit": "^11.1.0",
+    "@fastify/static": "^10.1.2",
+    "ai": "^7.0.31",
+    "dotenv": "^17.4.2",
+    "fastify": "^5.1.0",
+    "ioredis": "^5.4.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "cross-env": "^10.1.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
+  }
+}

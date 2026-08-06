@@ -1,0 +1,225 @@
+---
+title: Alerts & Actions (Autopilot)
+description: Policies, Slack/Telegram/webhook channels, and the human-in-the-loop approval flow.
+---
+
+Drift detection tells you *when* an agent's behavior changes. Autopilot decides
+*what to do about it*, either to notify a channel, or take a control action (pause,
+rollback, throttle, switch model) with a human approving from Slack, Telegram,
+or the console.
+
+It runs as a scheduled loop on the server: every cycle it detects drift,
+evaluates your policy, and dispatches actions. It's turned **off** by default, and when
+enabled starts in **shadow mode** so the full loop runs but takes no action and
+sends no messages, so you can watch what it *would* do before letting it act.
+
+## The loop
+
+```
+every AUTOPILOT_SCAN_INTERVAL_MS
+  └─ detect drift  →  DriftReport (severity, reasons, metric deltas)
+      └─ evaluate policy  →  a list of actions
+          ├─ notify_*   → sent immediately (Slack / Telegram / webhook)
+          └─ control_*  → creates an approval, posts Approve/Reject to every
+                          channel, waits for a human, then executes
+```
+
+- **Notify actions** are informational and fire right away.
+- **Control actions** change how the agent runs, so they never execute
+  unattended — they create an **approval** that a human resolves. Whoever acts
+  first wins (Slack button, Telegram button, or the console); the rest become
+  no-ops. An approval nobody answers within `AUTOPILOT_APPROVAL_TIMEOUT_MS`
+  resolves to the safe default (reject).
+
+## Enabling it — a safe rollout
+
+**1. Shadow first.** Turn the loop on but let it act on nothing:
+
+```bash
+AUTOPILOT_ENABLED=1
+AUTOPILOT_MODE=shadow
+```
+
+Every cycle writes the actions it *would* have taken to the audit log. Watch
+`/actions/log` (or the console's Action Log) for a cycle or two and confirm the
+policy fires when you expect. To rehearse the whole thing with no metrics
+backend and no real traffic, add `DRIFT_DRY_RUN=1`, it drives the loop off fixtures.
+
+**2. Wire your channels** (below), then **enforce**:
+
+```bash
+AUTOPILOT_MODE=enforce
+```
+
+Now notifications are sent and control actions create real approvals.
+
+**3. Set `REDIS_URL`** if you run more than one server process, so all
+processes share approvals and a leader lock ensures exactly one runs each cycle.
+See [deployment.md](/docs/deployment#shared-state-with-redis).
+
+## Policies — mapping drift to actions
+
+A policy is a list of rules. Each rule has a `when` (conditions, ANDed) and a
+`do` (actions to take when it matches). Supply it inline as JSON, or point at a
+file:
+
+```bash
+AUTOPILOT_POLICIES='[{"when":{"severity":"high"},"do":["notify_slack","pause_agent"]}]'
+# or
+AUTOPILOT_POLICIES_FILE=/etc/driftwatch/policies.json
+```
+
+If both are empty, a built-in default policy applies.
+
+```json
+[
+  { "when": { "severity": "high" },   "do": ["notify_slack", "notify_telegram", "pause_agent"] },
+  { "when": { "severity": "medium" }, "do": ["notify_slack", "notify_webhook"] },
+  { "when": { "tokenSpendDeltaPct": 100 }, "do": ["notify_webhook"] }
+]
+```
+
+**Conditions** (`when`) include `severity` (`low`/`medium`/`high`) and metric
+deltas such as `tokenSpendDeltaPct`. **Actions** (`do`):
+
+| Action | Kind | Effect |
+|---|---|---|
+| `notify_slack` | notify | Post to Slack (Block Kit) |
+| `notify_telegram` | notify | Post to Telegram |
+| `notify_webhook` | notify | POST the raw drift verdict as JSON |
+| `pause_agent` | control | Stop the agent from serving (needs approval) |
+| `resume_agent` | control | Resume a paused agent |
+| `rollback` | control | Roll the agent's active version back |
+| `throttle` | control | Reduce throughput |
+| `switch_model` | control | Move to a fallback model |
+
+Policy evaluation is a pure function, the same report + same policy always yields
+the same actions, so it's easy to reason about and test.
+
+## Channels
+
+Set only the channels you use; each is independent. Every channel is optional,
+and an unconfigured one is simply skipped.
+
+### Slack
+
+Two pieces: an **incoming webhook** to post messages, and a **signing secret**
+to verify the Approve/Reject button callbacks.
+
+```bash
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/…
+SLACK_SIGNING_SECRET=…
+```
+
+1. Create a Slack app → **Incoming Webhooks** → add one to your channel → copy
+   the URL into `SLACK_WEBHOOK_URL`.
+2. **Basic Information** → copy the **Signing Secret** into
+   `SLACK_SIGNING_SECRET`.
+3. **Interactivity & Shortcuts** → turn on, set the **Request URL** to
+   `https://<your-host>/integrations/slack/actions`.
+
+DriftWatch verifies each button callback's `X-Slack-Signature` (HMAC, with a
+5-minute replay window) before acting — see
+[security.md](/docs/security#integration-webhook-authentication).
+
+### Telegram
+
+```bash
+TELEGRAM_BOT_TOKEN=123456:ABC…
+TELEGRAM_CHAT_ID=-1001234567890
+TELEGRAM_SECRET_TOKEN=<a-secret-you-choose>
+```
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) → copy the token into
+   `TELEGRAM_BOT_TOKEN`.
+2. Get the target chat's id → `TELEGRAM_CHAT_ID`.
+3. Choose any secret string for `TELEGRAM_SECRET_TOKEN`, then register the
+   webhook so Telegram sends button presses back to you:
+
+   ```bash
+   curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+     -d "url=https://<your-host>/integrations/telegram/webhook" \
+     -d "secret_token=$TELEGRAM_SECRET_TOKEN"
+   ```
+
+DriftWatch checks Telegram's `X-Telegram-Bot-Api-Secret-Token` on every callback
+against your secret. Approve a pause from your phone; the console reflects it on
+its next poll.
+
+### Generic webhook
+
+For your own automation (PagerDuty, a Lambda, an internal service):
+
+```bash
+DRIFT_WEBHOOK_URL=https://…
+```
+
+Receives the raw drift verdict as JSON on every `notify_webhook`. Notify-only —
+no buttons, no approval flow.
+
+## What an approval looks like
+
+When a control action fires in enforce mode:
+
+1. An approval is created and a prompt with **Approve** / **Reject** buttons is
+   posted to every configured channel, carrying the drift severity, the reasons,
+   and the recommended action.
+2. A human clicks in any of the channels or resolves it in the console's Pending
+   Approvals queue. Resolution is atomic: the first response wins, duplicates
+   and forged retries are no-ops.
+3. On **Approve**, the control action executes and the result is written to the
+   audit log with who approved it and via which channel. On **Reject** (or
+   timeout), nothing changes and that's logged too.
+
+Everything — verdicts, approvals, and executed actions are visible in the
+[operator console](/docs/console) and via the control-plane API
+(`/drift/history`, `/approvals`, `/actions/log`).
+
+## Model switching (self-healing cost / reliability)
+
+`switch_model` is the one remediation that *adapts* the agent instead of just
+halting it — it moves the agent to a different model. The headline use case is
+**cost**: when your metrics dashboard shows token spend spiking, it downshifts from an expensive
+model to a cheaper one, and watch spend drop in the same dashboard.
+
+**Setup.** Register the target model and point a policy at it:
+
+```bash
+MODEL=qwen3.7-max                 # primary
+MODEL_FALLBACK=qwen3.7-plus          # registers qwen3.7-plus + becomes the switch target
+AUTOPILOT_ENABLED=1
+AUTOPILOT_MODE=enforce
+AUTOPILOT_POLICIES='[{"when":{"tokenSpendDeltaPct":100},"do":["notify_slack","switch_model"]}]'
+```
+
+Add more models by editing `model-client.ts`'s registry; set
+`AUTOPILOT_SWITCH_MODEL_TO` to choose which one `switch_model` targets (defaults
+to `MODEL_FALLBACK`).
+
+**How it flows.** Drift detection sees token spend cross the threshold → the
+policy proposes `switch_model` → because it's a control action, it creates an
+**approval** (a human confirms the downshift — a good thing, since a cheaper
+model may behave differently). On approval, the agent's active model changes and
+the very next `/run` routes to the new model. The drift judge itself always
+stays on the primary model, so switching the agent never weakens detection.
+
+**The cure doesn't look like the disease.** Switching models is itself a
+behavior change, so a naive detector would flag the intended switch as *new*
+drift on the next cycle. DriftWatch avoids that: every switch emits an
+`agent.model.switch` span (visible on the trace timeline) plus an
+`agent.model.switches` counter. The detector reads that counter and
+tells the judge "a switch happened in this window, so the expected change from it is
+not drift, but flag anything beyond it." So an approved downshift won't
+false-alarm, while a genuine regression that happens to coincide still gets
+caught.
+
+<Callout title="A heuristic, not rigorous re-baselining">
+  The current window still blends pre- and post-switch data, and the judge
+  reasons about the mix. Rigorous re-baselining (measuring drift only from
+  post-switch data forward) is a planned follow-up.
+</Callout>
+
+## Configuration reference
+
+Full env var tables for the loop and channels are in
+[configuration.md](/docs/configuration#autopilot--serverconfig-loop-2).

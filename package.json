@@ -1,0 +1,41 @@
+{
+  "name": "driftwatch-workspace",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Workspace root for DriftWatch: a self-observing AI agent SDK (packages/sdk), notifier/webhook companion (packages/autopilot), a reference Fastify server (packages/server), a Next.js console (packages/console), and docs (packages/docs).",
+  "license": "MIT",
+  "author": "Victory Lucky",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codewithveek/drift-watch.git"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm --filter @driftwatch/sdk build && pnpm --filter @driftwatch/autopilot build && pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "dev": "pnpm --parallel --filter @driftwatch/server --filter @driftwatch/console dev",
+    "dev:server": "pnpm --filter @driftwatch/server dev",
+    "dev:console": "pnpm --filter @driftwatch/console dev",
+    "start": "pnpm --filter @driftwatch/console build && pnpm --filter @driftwatch/server start",
+    "start:server": "pnpm --filter @driftwatch/server start",
+    "seed": "pnpm --filter @driftwatch/server seed",
+    "drift": "pnpm --filter @driftwatch/server drift",
+    "drift:dry-run": "pnpm --filter @driftwatch/server drift:dry-run",
+    "changeset": "changeset",
+    "changeset:version": "changeset version",
+    "changeset:publish": "pnpm build && changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.10",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
+  }
+}

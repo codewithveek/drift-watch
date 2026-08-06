@@ -1,0 +1,389 @@
+/**
+ * Behavioral drift detection — the "AI analysis over traces" layer.
+ *
+ * 1. Query a MetricsQuerySource (../drift/metrics-source.ts) for aggregate
+ *    agent behavior over two windows — the caller injects the concrete
+ *    implementation (e.g. ./prometheus-source.ts), so this module has no
+ *    opinion on which metrics backend is behind it.
+ * 2. Compute deltas (tool mix, error rate, p95 latency, token spend).
+ * 3. Ask the LLM (whatever ModelClient the caller injected) to classify
+ *    drift with generateObject so the verdict is schema-typed — no fragile
+ *    JSON parsing.
+ *
+ * Dry-run mode: pass isDryRun: true to use built-in fixtures instead of
+ * querying a metrics source. Useful for demos, CI, or first-run before
+ * you've generated traffic.
+ */
+import { generateText, type LanguageModelUsage, type ModelMessage } from 'ai';
+import { z } from 'zod';
+import type { ModelClient } from '../model-client.js';
+import { describeModelClient } from '../model-client.js';
+import type { MetricsQuerySource, WindowStats } from './metrics-source.js';
+import type { TokenUsageSummary } from '../telemetry/usage-tracking.js';
+
+export type { WindowStats, MetricsQuerySource } from './metrics-source.js';
+
+const DRIFT_JUDGE_FUNCTION_ID = 'drift-judge';
+const ONE_HOUR_MS = 60 * 60 * 1000;
+
+const DriftVerdictSchema = z.object({
+  drift: z.boolean().describe('Whether the agent has behaviorally drifted enough to warrant a human alert.'),
+  severity: z
+    .enum(['none', 'low', 'medium', 'high'])
+    .describe('Severity of the drift, or "none" if drift is false.'),
+  reasons: z
+    .array(z.string())
+    .describe('Short bullet-point reasons citing the specific metrics that changed.'),
+  recommended_action: z.string().describe('One sentence recommending what to do next.'),
+});
+export type DriftVerdict = z.infer<typeof DriftVerdictSchema>;
+
+export interface DriftReport {
+  baselineWindowStats: WindowStats;
+  currentWindowStats: WindowStats;
+  verdict: DriftVerdict;
+  judgeTokenUsage: TokenUsageSummary;
+  /**
+   * How many model calls the judge needed to get a schema-valid verdict
+   * (1 = the model returned valid JSON on the first try). Consistently >1
+   * is a signal the model/provider is struggling with the output format and
+   * burning extra tokens on retries.
+   */
+  judgeAttempts: number;
+  providerName: string;
+  modelIdentifier: string;
+}
+
+export interface DetectBehavioralDriftOptions {
+  modelClient: ModelClient;
+  isDryRun?: boolean;
+  /** Required unless isDryRun is true — see ./metrics-source.ts and ./prometheus-source.ts. */
+  metricsQuerySource?: MetricsQuerySource;
+}
+
+export async function detectBehavioralDrift(
+  options: DetectBehavioralDriftOptions,
+): Promise<DriftReport> {
+  const { modelClient, isDryRun = false, metricsQuerySource } = options;
+
+  if (!isDryRun && !metricsQuerySource) {
+    throw new Error(
+      'detectBehavioralDrift requires a metricsQuerySource unless isDryRun is true',
+    );
+  }
+
+  const [baselineWindowStats, currentWindowStats] = isDryRun
+    ? loadFixtureWindows()
+    : await queryLiveWindows(metricsQuerySource!);
+
+  // If Autopilot switched the agent's model this window, the resulting behavior
+  // change is intentional — tell the judge so it doesn't flag the cure as the
+  // disease. Fixtures have no such context. See queryModelSwitchNote.
+  const modelSwitchNote = isDryRun
+    ? undefined
+    : await queryModelSwitchNote(metricsQuerySource!);
+
+  const modelClientDescriptor = describeModelClient(modelClient);
+  const { verdict, judgeTokenUsage, judgeAttempts } = await judgeDriftVerdict({
+    baselineWindowStats,
+    currentWindowStats,
+    modelClient,
+    modelSwitchNote,
+  });
+
+  return {
+    baselineWindowStats,
+    currentWindowStats,
+    verdict,
+    judgeTokenUsage,
+    judgeAttempts,
+    providerName: modelClientDescriptor.providerName,
+    modelIdentifier: modelClientDescriptor.modelIdentifier,
+  };
+}
+
+async function queryLiveWindows(
+  metricsQuerySource: MetricsQuerySource,
+): Promise<[WindowStats, WindowStats]> {
+  const windowEndTimeMs = Date.now();
+
+  return Promise.all([
+    metricsQuerySource.queryWindowStats({
+      windowLabel: 'baseline',
+      startTimeMs: windowEndTimeMs - 2 * ONE_HOUR_MS,
+      endTimeMs: windowEndTimeMs - ONE_HOUR_MS,
+    }),
+    metricsQuerySource.queryWindowStats({
+      windowLabel: 'current',
+      startTimeMs: windowEndTimeMs - ONE_HOUR_MS,
+      endTimeMs: windowEndTimeMs,
+    }),
+  ]);
+}
+
+/**
+ * Count Autopilot model switches in the current window (the `agent.model.switches`
+ * counter emitted by executeControlAction) and, if any, return a note the judge
+ * uses to avoid classifying the *intended* behavior change as drift.
+ *
+ * Fail-safe by design: any query error resolves to "no switch" (undefined), so a
+ * hiccup here never breaks drift detection — the worst case is a switch isn't
+ * discounted, i.e. exactly today's behavior.
+ */
+async function queryModelSwitchNote(
+  metricsQuerySource: MetricsQuerySource,
+): Promise<string | undefined> {
+  const endTimeMs = Date.now();
+  const startTimeMs = endTimeMs - ONE_HOUR_MS;
+  try {
+    const switchCount = await metricsQuerySource.queryModelSwitchCount({
+      startTimeMs,
+      endTimeMs,
+    });
+    if (switchCount <= 0) return undefined;
+    const times = switchCount >= 2 ? `${Math.round(switchCount)} times` : 'once';
+    return (
+      `Autopilot switched the monitored agent's model ${times} during the CURRENT window ` +
+      `(an intentional remediation, not organic behavior). Changes attributable to a model ` +
+      `switch — especially token-spend and per-tool latency shifts — are EXPECTED and must ` +
+      `NOT be classified as drift on their own. Flag drift only for changes beyond what a ` +
+      `model switch explains (e.g. a real error-rate spike or a tool-mix collapse).`
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+function loadFixtureWindows(): [WindowStats, WindowStats] {
+  return [
+    buildFixtureWindowStats('baseline', 1),
+    buildFixtureWindowStats('current', 2.5),
+  ];
+}
+
+function buildFixtureWindowStats(
+  windowLabel: string,
+  driftMultiplier: number,
+): WindowStats {
+  return {
+    windowLabel,
+    totalCalls: Math.round(120 * driftMultiplier),
+    errorRate: 0.02 * driftMultiplier,
+    p95LatencyMs: 180 * driftMultiplier,
+    tokenSpend: Math.round(48_000 * driftMultiplier),
+    toolMix: {
+      get_weather: driftMultiplier < 2 ? 0.6 : 0.25,
+      search_docs: driftMultiplier < 2 ? 0.4 : 0.75,
+    },
+  };
+}
+
+/**
+ * Ask the model to classify drift and return a schema-valid verdict.
+ *
+ * Why not `generateObject`? Its structured-output guarantee is only as good as
+ * the provider's `response_format` support. The AI SDK's OpenAI provider always
+ * sends `response_format: { type: 'json_schema' }` when a schema is present and
+ * injects NO JSON instruction into the prompt — it trusts the API to enforce
+ * shape. OpenAI-compatible endpoints that don't implement `json_schema` silently ignore that field, so
+ * the model, with nothing in the prompt telling it otherwise, happily returns a
+ * prose/markdown report and `generateObject` throws on the first `#`.
+ *
+ * So we drive the format from the prompt instead and parse defensively:
+ *   1. a strong system prompt + example demand a single raw JSON object,
+ *   2. `extractFirstJsonObject` salvages that object even if the model wraps it
+ *      in a code fence or prose,
+ *   3. Zod validates it, and
+ *   4. on any failure we re-prompt with the concrete error, up to
+ *      MAX_JUDGE_ATTEMPTS times, before giving up.
+ * This works against any provider — strict-structured-output or not.
+ */
+const MAX_JUDGE_ATTEMPTS = 3;
+
+async function judgeDriftVerdict(options: {
+  baselineWindowStats: WindowStats;
+  currentWindowStats: WindowStats;
+  modelClient: ModelClient;
+  modelSwitchNote?: string;
+}): Promise<{
+  verdict: DriftVerdict;
+  judgeTokenUsage: TokenUsageSummary;
+  judgeAttempts: number;
+}> {
+  const { baselineWindowStats, currentWindowStats, modelClient, modelSwitchNote } =
+    options;
+
+  const messages: ModelMessage[] = [
+    {
+      role: 'user',
+      content: buildDriftJudgePrompt({
+        baselineWindowStats,
+        currentWindowStats,
+        modelSwitchNote,
+      }),
+    },
+  ];
+
+  const usageTotals: TokenUsageSummary = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  };
+  let lastFailure = '';
+
+  for (let attempt = 1; attempt <= MAX_JUDGE_ATTEMPTS; attempt++) {
+    const { text, usage } = await generateText({
+      model: modelClient,
+      // Deterministic + non-creative: we want the verdict, not an essay.
+      temperature: 0,
+      system: DRIFT_JUDGE_SYSTEM_PROMPT,
+      messages,
+      telemetry: {
+        isEnabled: true,
+        functionId: DRIFT_JUDGE_FUNCTION_ID,
+      },
+    });
+    accumulateUsage(usageTotals, usage);
+
+    const parsed = parseDriftVerdict(text);
+    if (parsed.ok) {
+      return {
+        verdict: parsed.verdict,
+        judgeTokenUsage: { ...usageTotals },
+        judgeAttempts: attempt,
+      };
+    }
+
+    lastFailure = parsed.error;
+    // Feed the model back its own reply plus the concrete failure so it can
+    // self-correct on the next turn.
+    messages.push({ role: 'assistant', content: text });
+    messages.push({ role: 'user', content: buildCorrectionPrompt(parsed.error) });
+  }
+
+  throw new Error(
+    `drift judge did not return a schema-valid JSON verdict after ` +
+      `${MAX_JUDGE_ATTEMPTS} attempts. Last failure: ${lastFailure}`,
+  );
+}
+
+type DriftVerdictParseResult =
+  | { ok: true; verdict: DriftVerdict }
+  | { ok: false; error: string };
+
+function parseDriftVerdict(modelText: string): DriftVerdictParseResult {
+  const jsonText = extractFirstJsonObject(modelText);
+  if (jsonText === null) {
+    return { ok: false, error: 'reply contained no JSON object.' };
+  }
+
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(jsonText);
+  } catch (error) {
+    return {
+      ok: false,
+      error: `extracted text was not valid JSON: ${(error as Error).message}`,
+    };
+  }
+
+  const validated = DriftVerdictSchema.safeParse(parsedJson);
+  if (!validated.success) {
+    return {
+      ok: false,
+      error: `JSON did not match the required schema: ${validated.error.issues
+        .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+        .join('; ')}`,
+    };
+  }
+
+  return { ok: true, verdict: validated.data };
+}
+
+/**
+ * Pull the first complete, brace-balanced JSON object out of arbitrary model
+ * text. Handles the object being wrapped in a ```json fence, prefixed with a
+ * markdown report, or trailed by commentary. Tracks string literals and escapes
+ * so a `}` inside a string value never terminates the scan early. Returns null
+ * when no balanced object is present.
+ */
+export function extractFirstJsonObject(text: string): string | null {
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const haystack = fenceMatch ? fenceMatch[1] : text;
+
+  const start = haystack.indexOf('{');
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let isEscaped = false;
+
+  for (let i = start; i < haystack.length; i++) {
+    const char = haystack[i];
+
+    if (inString) {
+      if (isEscaped) {
+        isEscaped = false;
+      } else if (char === '\\') {
+        isEscaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+    } else if (char === '{') {
+      depth++;
+    } else if (char === '}') {
+      depth--;
+      if (depth === 0) return haystack.slice(start, i + 1);
+    }
+  }
+
+  return null;
+}
+
+function accumulateUsage(
+  totals: TokenUsageSummary,
+  usage: LanguageModelUsage,
+): void {
+  totals.inputTokens = (totals.inputTokens ?? 0) + (usage.inputTokens ?? 0);
+  totals.outputTokens = (totals.outputTokens ?? 0) + (usage.outputTokens ?? 0);
+  totals.totalTokens = (totals.totalTokens ?? 0) + (usage.totalTokens ?? 0);
+}
+
+const DRIFT_JUDGE_SYSTEM_PROMPT = `You are an SRE copilot that classifies whether an AI agent's behavior has drifted enough to warrant a human alert.
+
+You MUST reply with a SINGLE raw JSON object and NOTHING else. No markdown, no code fences, no headings, no bullet points, no prose before or after the object. Any output that is not a lone JSON object is a failure.
+
+The JSON object must have exactly these keys:
+- "drift": boolean — true if the drift warrants a human alert, otherwise false.
+- "severity": one of "none", "low", "medium", or "high" (use "none" when "drift" is false).
+- "reasons": array of short strings, each naming a specific metric that changed (e.g. "p95 latency 180ms -> 450ms").
+- "recommended_action": a single sentence recommending what to do next.
+
+Example of a correctly formatted reply (structure only — do not reuse these values):
+{"drift":true,"severity":"high","reasons":["p95 latency 180ms -> 450ms","error rate 2% -> 9%","search_docs share 40% -> 75%"],"recommended_action":"Page the on-call engineer to investigate the search_docs regression."}`;
+
+function buildDriftJudgePrompt(options: {
+  baselineWindowStats: WindowStats;
+  currentWindowStats: WindowStats;
+  modelSwitchNote?: string;
+}): string {
+  const { baselineWindowStats, currentWindowStats, modelSwitchNote } = options;
+  const switchContext = modelSwitchNote ? `\n\nCONTEXT: ${modelSwitchNote}` : '';
+  return `Compare the CURRENT window against the BASELINE and decide whether the agent's behavior has drifted enough to warrant a human alert. Consider shifts in tool-call mix, rising error rate, latency regressions, and token-spend spikes.
+
+BASELINE: ${JSON.stringify(baselineWindowStats)}
+CURRENT:  ${JSON.stringify(currentWindowStats)}${switchContext}
+
+Reply with ONLY the JSON object described in your instructions.`;
+}
+
+function buildCorrectionPrompt(failure: string): string {
+  return `Your previous reply was rejected: ${failure}
+
+Reply again with ONLY a single raw JSON object — no markdown, no code fences, no commentary — using exactly the keys "drift", "severity", "reasons", and "recommended_action".`;
+}

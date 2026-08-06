@@ -1,0 +1,89 @@
+# Single-stack deploy for Coolify: DriftWatch (server, with the console
+# bundled in — see packages/server/Dockerfile) + Redis + an OTel Collector +
+# Prometheus, all in one Docker Compose project so Coolify can bring the
+# whole thing up as one resource.
+#
+# This is the same topology as docker-compose.observability.yml — the only
+# difference is Coolify's networking model (see below), which is why it's a
+# separate file rather than something Coolify could just point at the other
+# one directly.
+#
+# Deploying on Coolify:
+#   1. New Resource -> Docker Compose, pointed at this repo, compose file
+#      path "docker-compose.coolify.yml".
+#   2. Set the env vars referenced below (QWEN_API_KEY at minimum) in
+#      Coolify's Environment Variables tab for the resource.
+#   3. Per Coolify's docker-compose networking model, services are private by
+#      default (reachable only inside the stack) unless you assign a Domain.
+#      No service here publishes a host port on purpose (Coolify's own docs
+#      warn that bypasses its proxy). Assign a Domain to `driftwatch` only
+#      (e.g. https://driftwatch.yourdomain.com:3000) — redis, otel-collector,
+#      and prometheus stay internal; driftwatch reaches them by service name
+#      on the stack's own network, no domain needed for those. Assign
+#      Prometheus a domain too only if you want to browse its own UI directly.
+#   4. Deploy.
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - driftwatch-redis:/data
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./observability/otel-collector/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    expose:
+      - "9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - driftwatch-prometheus:/prometheus
+    depends_on:
+      - otel-collector
+    restart: unless-stopped
+
+  driftwatch:
+    build:
+      context: .
+      dockerfile: packages/server/Dockerfile
+    expose:
+      - "3000"
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      PROMETHEUS_URL: http://prometheus:9090
+      PROMETHEUS_BEARER_TOKEN: ${PROMETHEUS_BEARER_TOKEN:-}
+      # --- model client (Qwen Cloud, OpenAI-compatible) ---
+      QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      MODEL: ${MODEL:-qwen3.7-max}
+      AUTH_TOKEN: ${AUTH_TOKEN:-}
+      # --- shared state (multi-process): point autopilot at the Redis above ---
+      REDIS_URL: redis://redis:6379
+      # --- autopilot (drift-triggered remediation loop) ---
+      AUTOPILOT_ENABLED: ${AUTOPILOT_ENABLED:-0}
+      AUTOPILOT_MODE: ${AUTOPILOT_MODE:-shadow}
+      AUTOPILOT_SCAN_INTERVAL_MS: ${AUTOPILOT_SCAN_INTERVAL_MS:-60000}
+      AUTOPILOT_APPROVAL_TIMEOUT_MS: ${AUTOPILOT_APPROVAL_TIMEOUT_MS:-600000}
+      AUTOPILOT_POLICIES: ${AUTOPILOT_POLICIES:-}
+      # --- notification / approval channels ---
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_SECRET_TOKEN: ${TELEGRAM_SECRET_TOKEN:-}
+      DRIFT_WEBHOOK_URL: ${DRIFT_WEBHOOK_URL:-}
+      PORT: 3000
+    depends_on:
+      - redis
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  driftwatch-redis:
+  driftwatch-prometheus:
