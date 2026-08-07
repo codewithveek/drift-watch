@@ -43,7 +43,7 @@ const qwenCloud = createOpenAI({
     'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
   apiKey: process.env.QWEN_API_KEY ?? '',
 });
-const modelClient = qwenCloud(process.env.MODEL ?? 'qwen3.7-max');
+const modelClient = qwenCloud(process.env.MODEL ?? 'glm-5.2');
 
 const tools = {
   lookup_order: tool({

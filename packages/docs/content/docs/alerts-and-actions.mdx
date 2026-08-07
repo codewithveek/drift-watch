@@ -185,8 +185,8 @@ model to a cheaper one, and watch spend drop in the same dashboard.
 **Setup.** Register the target model and point a policy at it:
 
 ```bash
-MODEL=qwen3.7-max                 # primary
-MODEL_FALLBACK=qwen3.7-plus          # registers qwen3.7-plus + becomes the switch target
+MODEL=glm-5.2                 # primary
+MODEL_FALLBACK=glm-5.2          # registers glm-5.2 + becomes the switch target
 AUTOPILOT_ENABLED=1
 AUTOPILOT_MODE=enforce
 AUTOPILOT_POLICIES='[{"when":{"tokenSpendDeltaPct":100},"do":["notify_slack","switch_model"]}]'

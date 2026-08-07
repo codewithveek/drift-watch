@@ -63,13 +63,13 @@ describe('ApprovalService', () => {
       notifiers: emptyNotifiers,
       approvalTimeoutMs: 60_000,
       timeoutDecision: 'rejected',
-      switchModelTo: 'qwen3.7-plusplus',
+      switchModelTo: 'glm-5.2',
     });
 
     const approval = await service.requestApproval('agent-1', switchModelIntent());
     await service.resolve(approval.id, 'approved', 'alice', 'console');
 
-    expect((await store.getAgentState('agent-1')).activeModel).toBe('qwen3.7-plusplus');
+    expect((await store.getAgentState('agent-1')).activeModel).toBe('glm-5.2');
     service.stop();
   });
 

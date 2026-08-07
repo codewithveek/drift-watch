@@ -33,6 +33,8 @@ services:
 
   prometheus:
     image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
     volumes:
       - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - driftwatch-prometheus:/prometheus
@@ -46,12 +48,18 @@ services:
       dockerfile: packages/server/Dockerfile
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      # This agent's identity — the fleet model's PrometheusMetricsSource
+      # filters queries by service_name, so this must be set (and unique
+      # per instance) for per-agent isolation to mean anything.
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-driftwatch}
+      AGENT_ID: ${AGENT_ID:-default}
+      AGENT_NAME: ${AGENT_NAME:-}
       PROMETHEUS_URL: http://prometheus:9090
       PROMETHEUS_BEARER_TOKEN: ${PROMETHEUS_BEARER_TOKEN:-}
       # --- model client (Qwen Cloud, OpenAI-compatible) ---
       QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
       QWEN_API_KEY: ${QWEN_API_KEY:-}
-      MODEL: ${MODEL:-qwen3.7-max}
+      MODEL: ${MODEL:-glm-5.2}
       AUTH_TOKEN: ${AUTH_TOKEN:-}
       # --- shared state (multi-process): point autopilot at the Redis above ---
       REDIS_URL: redis://redis:6379

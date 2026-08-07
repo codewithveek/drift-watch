@@ -78,14 +78,14 @@ const qwenCloud = createOpenAI({
   baseURL: process.env.QWEN_BASE_URL ?? 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
   apiKey: process.env.QWEN_API_KEY ?? '',
 });
-export const modelClient = qwenCloud(process.env.MODEL ?? 'qwen3.7-max');
+export const modelClient = qwenCloud(process.env.MODEL ?? 'glm-5.2');
 ```
 
 | Env var | Default | Notes |
 |---|---|---|
 | `QWEN_API_KEY` | — | Required for real model calls |
 | `QWEN_BASE_URL` | Qwen intl endpoint | Any OpenAI-compatible base URL |
-| `MODEL` | `qwen3.7-max` | Model id |
+| `MODEL` | `glm-5.2` | Model id |
 
 **To use a different provider**, install that one package and change two lines:
 

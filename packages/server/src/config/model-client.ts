@@ -13,9 +13,9 @@
  *   QWEN_BASE_URL    OpenAI-compatible base URL for Qwen Cloud, e.g.
  *                    https://dashscope-intl.aliyuncs.com/compatible-mode/v1
  *   QWEN_API_KEY     your Qwen Cloud API key
- *   MODEL            primary model id, e.g. qwen3.7-max
+ *   MODEL            primary model id, e.g. glm-5.2
  *   MODEL_FALLBACK   optional cheaper model id Autopilot can switch the agent
- *                    to when a policy fires `switch_model` (e.g. qwen3.7-plus).
+ *                    to when a policy fires `switch_model` (e.g. glm-5.2).
  *
  * ## Model registry (Autopilot model switching)
  *
@@ -46,7 +46,7 @@ const qwenCloud = createOpenAI({
 });
 
 /** Primary model id — the agent's default and the drift judge's model. */
-export const defaultModelId = process.env.MODEL ?? 'qwen3.7-max';
+export const defaultModelId = process.env.MODEL ?? 'glm-5.2';
 
 /** Optional cheaper/fallback model id Autopilot can switch the agent to. */
 const fallbackModelId = process.env.MODEL_FALLBACK ?? '';

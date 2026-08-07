@@ -157,7 +157,7 @@ const qwenCloud = createOpenAI({
   baseURL: process.env.QWEN_BASE_URL ?? 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
   apiKey: process.env.QWEN_API_KEY ?? '',
 });
-export const modelClient = qwenCloud(process.env.MODEL ?? 'qwen3.7-max');
+export const modelClient = qwenCloud(process.env.MODEL ?? 'glm-5.2');
 ```
 
 Set `QWEN_API_KEY` (and optionally `MODEL`) in your `.env`. To use a different
@@ -167,7 +167,7 @@ provider, see [server.md → Model client](/docs/server#the-model-client).
 |---|---|---|
 | `QWEN_BASE_URL` | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | Qwen Cloud OpenAI-compatible base URL. |
 | `QWEN_API_KEY` | `''` | Your Qwen Cloud API key. Required to make real model calls. |
-| `MODEL` | `qwen3.7-max` | Primary model id — e.g. `qwen3.7-max` / `qwen3.7-plusplus` / `qwen3.7-plusturbo`. |
+| `MODEL` | `glm-5.2` | Primary model id — e.g. `glm-5.2` / `glm-5.2` / `qwen3.7-plusturbo`. |
 | `MODEL_FALLBACK` | `''` | Optional cheaper model id Autopilot can switch the agent to. Setting it registers the model and becomes the default `AUTOPILOT_SWITCH_MODEL_TO`. |
 
 **Any other provider** — install exactly that one package, swap two lines:
