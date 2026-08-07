@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
 import type { ToolSet } from 'ai';
 import {
   runAgentTask,
@@ -9,7 +9,7 @@ import {
 } from '@driftwatch/sdk';
 import type { ServerConfig } from '../config/server-config.js';
 import { isRequestAuthorized } from './auth.js';
-import { createMetricsQuerySource } from '../config/metrics-source.js';
+import { createMetricsQuerySourceFor } from '../config/metrics-source.js';
 
 export interface RegisterRoutesOptions {
   /** Primary/default client — used by the drift judge and when no switch is active. */
@@ -29,90 +29,113 @@ export async function registerRoutes(
 ): Promise<void> {
   const { modelClient, modelRegistry, store, tools, serverConfig, driftWatchConfig } =
     options;
-  const metricsQuerySource = createMetricsQuerySource(driftWatchConfig.driftDetection);
 
   /**
    * Pick the client for the next agent run: the model Autopilot has switched
-   * the agent to (if any and known), else the primary. Read fresh per request
+   * this agent to (if any and known), else the primary. Read fresh per request
    * so a switch takes effect on the very next call, and so all processes
    * (which share the store) converge on the same model.
    */
-  async function resolveAgentModel(): Promise<ModelClient> {
-    const { activeModel } = await store.getAgentState();
+  async function resolveAgentModel(agentId: string): Promise<ModelClient> {
+    const { activeModel } = await store.getAgentState(agentId);
     if (activeModel && modelRegistry[activeModel]) return modelRegistry[activeModel];
     return modelClient;
   }
 
+  async function runTask(agentId: string, prompt: string) {
+    return runAgentTask({
+      prompt,
+      modelClient: await resolveAgentModel(agentId),
+      tools,
+      maxSteps: driftWatchConfig.agent.maxSteps,
+      guardrails: {
+        maxTokensPerTask: driftWatchConfig.agent.maxTokensPerTask,
+        maxCostUsd: driftWatchConfig.agent.maxCostUsd,
+        pricePer1kInput: driftWatchConfig.agent.pricePer1kInput,
+        pricePer1kOutput: driftWatchConfig.agent.pricePer1kOutput,
+        onExceed: driftWatchConfig.agent.onExceed,
+      },
+    });
+  }
+
+  async function runDrift(agentId: string) {
+    const agent = await store.getAgentDefinition(agentId);
+    const metricsQuerySource = agent
+      ? createMetricsQuerySourceFor(driftWatchConfig.driftDetection, agent)
+      : undefined;
+    return detectBehavioralDrift({
+      modelClient,
+      isDryRun: serverConfig.driftDryRun,
+      metricsQuerySource,
+    });
+  }
+
   fastifyServer.get('/health', async () => ({ ok: true }));
 
-  fastifyServer.post<{ Body: { prompt: string } }>(
-    '/run',
-    {
-      config: {
-        rateLimit: {
-          max: serverConfig.rateLimitMax,
-          timeWindow: serverConfig.rateLimitWindowMs,
-        },
+  const runRateLimit = {
+    config: {
+      rateLimit: {
+        max: serverConfig.rateLimitMax,
+        timeWindow: serverConfig.rateLimitWindowMs,
       },
     },
+  };
+
+  async function handleRun(agentId: string, prompt: unknown, reply: FastifyReply) {
+    const promptValidationError = validateRunRequestPrompt(prompt, serverConfig.maxPromptBytes);
+    if (promptValidationError) {
+      return reply
+        .code(promptValidationError.statusCode)
+        .send({ error: promptValidationError.message });
+    }
+
+    try {
+      const agentTaskResult = await runTask(agentId, prompt as string);
+      return { output: agentTaskResult.responseText, usage: agentTaskResult };
+    } catch (error) {
+      reply.log.error({ error }, 'agent run failed');
+      return reply.code(500).send({ error: (error as Error).message });
+    }
+  }
+
+  async function handleDrift(agentId: string, reply: FastifyReply, log: FastifyBaseLogger) {
+    try {
+      return await runDrift(agentId);
+    } catch (error) {
+      log.error({ error }, 'drift detection failed');
+      return reply.code(500).send({ error: (error as Error).message });
+    }
+  }
+
+  // Bare /run resolves to this server's auto-registered default agent — kept
+  // as an alias so anything integrated against the pre-fleet single-agent API
+  // keeps working unmodified. New integrations should use the agentId-scoped
+  // route directly.
+  fastifyServer.post<{ Body: { prompt: string } }>('/run', runRateLimit, async (request, reply) => {
+    if (!isRequestAuthorized(request, reply, serverConfig.authToken)) return;
+    return handleRun(serverConfig.agentId, request.body?.prompt, reply);
+  });
+
+  fastifyServer.post<{ Params: { agentId: string }; Body: { prompt: string } }>(
+    '/agents/:agentId/run',
+    runRateLimit,
     async (request, reply) => {
       if (!isRequestAuthorized(request, reply, serverConfig.authToken)) return;
-
-      const promptValidationError = validateRunRequestPrompt(
-        request.body?.prompt,
-        serverConfig.maxPromptBytes,
-      );
-      if (promptValidationError) {
-        return reply
-          .code(promptValidationError.statusCode)
-          .send({ error: promptValidationError.message });
-      }
-
-      try {
-        const agentTaskResult = await runAgentTask({
-          prompt: request.body.prompt,
-          modelClient: await resolveAgentModel(),
-          tools,
-          maxSteps: driftWatchConfig.agent.maxSteps,
-          guardrails: {
-            maxTokensPerTask: driftWatchConfig.agent.maxTokensPerTask,
-            maxCostUsd: driftWatchConfig.agent.maxCostUsd,
-            pricePer1kInput: driftWatchConfig.agent.pricePer1kInput,
-            pricePer1kOutput: driftWatchConfig.agent.pricePer1kOutput,
-            onExceed: driftWatchConfig.agent.onExceed,
-          },
-        });
-        return { output: agentTaskResult.responseText, usage: agentTaskResult };
-      } catch (error) {
-        request.log.error({ error }, 'agent run failed');
-        return reply.code(500).send({ error: (error as Error).message });
-      }
+      return handleRun(request.params.agentId, request.body?.prompt, reply);
     },
   );
 
-  fastifyServer.get(
-    '/drift',
-    {
-      config: {
-        rateLimit: {
-          max: serverConfig.rateLimitMax,
-          timeWindow: serverConfig.rateLimitWindowMs,
-        },
-      },
-    },
+  fastifyServer.get('/drift', runRateLimit, async (request, reply) => {
+    if (!isRequestAuthorized(request, reply, serverConfig.authToken)) return;
+    return handleDrift(serverConfig.agentId, reply, request.log);
+  });
+
+  fastifyServer.get<{ Params: { agentId: string } }>(
+    '/agents/:agentId/drift',
+    runRateLimit,
     async (request, reply) => {
       if (!isRequestAuthorized(request, reply, serverConfig.authToken)) return;
-
-      try {
-        return await detectBehavioralDrift({
-          modelClient,
-          isDryRun: serverConfig.driftDryRun,
-          metricsQuerySource,
-        });
-      } catch (error) {
-        request.log.error({ error }, 'drift detection failed');
-        return reply.code(500).send({ error: (error as Error).message });
-      }
+      return handleDrift(request.params.agentId, reply, request.log);
     },
   );
 }

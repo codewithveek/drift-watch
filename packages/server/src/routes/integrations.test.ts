@@ -12,6 +12,7 @@ import { ServerConfigSchema, type ServerConfig } from '../config/server-config.j
 const SIGNING_SECRET = 'test-signing-secret';
 const TELEGRAM_SECRET = 'test-telegram-secret';
 const TELEGRAM_TOKEN = 'test-bot-token';
+const TEST_AGENT_ID = 'agent-1';
 
 function serverConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
   return ServerConfigSchema.parse({
@@ -97,7 +98,7 @@ describe('POST /integrations/slack/actions', () => {
 
   it('resolves the shared approval on a valid signed Approve', async () => {
     const { fastify, store, approvalService } = await buildApp(serverConfig());
-    const approval = await approvalService.requestApproval(controlIntent());
+    const approval = await approvalService.requestApproval(TEST_AGENT_ID, controlIntent());
     const { body, ts, signature } = signedSlackRequest(approval.id, 'dw_approve');
 
     const res = await fastify.inject({
@@ -113,13 +114,13 @@ describe('POST /integrations/slack/actions', () => {
 
     expect(res.statusCode).toBe(200);
     // Approving pause_agent through Slack mutates the SHARED store.
-    expect((await store.getAgentState()).status).toBe('paused');
-    expect(await store.listPendingApprovals()).toHaveLength(0);
+    expect((await store.getAgentState(TEST_AGENT_ID)).status).toBe('paused');
+    expect(await store.listPendingApprovals(TEST_AGENT_ID)).toHaveLength(0);
   });
 
   it('rejects a forged signature with 401 and does not resolve', async () => {
     const { fastify, store, approvalService } = await buildApp(serverConfig());
-    const approval = await approvalService.requestApproval(controlIntent());
+    const approval = await approvalService.requestApproval(TEST_AGENT_ID, controlIntent());
     const { body, ts } = signedSlackRequest(approval.id, 'dw_approve');
 
     const res = await fastify.inject({
@@ -134,8 +135,8 @@ describe('POST /integrations/slack/actions', () => {
     });
 
     expect(res.statusCode).toBe(401);
-    expect((await store.getAgentState()).status).toBe('running');
-    expect(await store.listPendingApprovals()).toHaveLength(1);
+    expect((await store.getAgentState(TEST_AGENT_ID)).status).toBe('running');
+    expect(await store.listPendingApprovals(TEST_AGENT_ID)).toHaveLength(1);
   });
 
   it('returns 503 when Slack is not configured', async () => {
@@ -171,7 +172,7 @@ describe('POST /integrations/telegram/webhook', () => {
 
   it('resolves the approval when the secret-token header matches', async () => {
     const { fastify, store, approvalService } = await buildApp(serverConfig());
-    const approval = await approvalService.requestApproval(controlIntent());
+    const approval = await approvalService.requestApproval(TEST_AGENT_ID, controlIntent());
 
     const res = await fastify.inject({
       method: 'POST',
@@ -187,12 +188,12 @@ describe('POST /integrations/telegram/webhook', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect((await store.getAgentState()).status).toBe('paused');
+    expect((await store.getAgentState(TEST_AGENT_ID)).status).toBe('paused');
   });
 
   it('rejects a wrong secret token with 401', async () => {
     const { fastify, store, approvalService } = await buildApp(serverConfig());
-    const approval = await approvalService.requestApproval(controlIntent());
+    const approval = await approvalService.requestApproval(TEST_AGENT_ID, controlIntent());
 
     const res = await fastify.inject({
       method: 'POST',
@@ -204,6 +205,6 @@ describe('POST /integrations/telegram/webhook', () => {
     });
 
     expect(res.statusCode).toBe(401);
-    expect((await store.getAgentState()).status).toBe('running');
+    expect((await store.getAgentState(TEST_AGENT_ID)).status).toBe('running');
   });
 });

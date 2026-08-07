@@ -41,9 +41,10 @@ describe('ApprovalService', () => {
       timeoutDecision: 'rejected',
     });
 
-    const approval = await service.requestApproval(controlIntent());
+    const approval = await service.requestApproval('agent-1', controlIntent());
     expect(approval.status).toBe('pending');
-    expect(await store.listPendingApprovals()).toHaveLength(1);
+    expect(approval.agentId).toBe('agent-1');
+    expect(await store.listPendingApprovals('agent-1')).toHaveLength(1);
 
     const resolved = await service.resolve(approval.id, 'approved', 'alice', 'slack');
     expect(resolved?.status).toBe('approved');
@@ -51,7 +52,7 @@ describe('ApprovalService', () => {
     expect(resolved?.channel).toBe('slack');
 
     // Approving pause_agent should have paused the monitored agent.
-    const state = await store.getAgentState();
+    const state = await store.getAgentState('agent-1');
     expect(state.status).toBe('paused');
     service.stop();
   });
@@ -65,10 +66,10 @@ describe('ApprovalService', () => {
       switchModelTo: 'qwen3.7-plusplus',
     });
 
-    const approval = await service.requestApproval(switchModelIntent());
+    const approval = await service.requestApproval('agent-1', switchModelIntent());
     await service.resolve(approval.id, 'approved', 'alice', 'console');
 
-    expect((await store.getAgentState()).activeModel).toBe('qwen3.7-plusplus');
+    expect((await store.getAgentState('agent-1')).activeModel).toBe('qwen3.7-plusplus');
     service.stop();
   });
 
@@ -81,10 +82,10 @@ describe('ApprovalService', () => {
       // switchModelTo intentionally omitted
     });
 
-    const approval = await service.requestApproval(switchModelIntent());
+    const approval = await service.requestApproval('agent-1', switchModelIntent());
     await service.resolve(approval.id, 'approved', 'alice', 'console');
 
-    expect((await store.getAgentState()).activeModel).toBeUndefined();
+    expect((await store.getAgentState('agent-1')).activeModel).toBeUndefined();
     service.stop();
   });
 
@@ -96,7 +97,7 @@ describe('ApprovalService', () => {
       timeoutDecision: 'rejected',
     });
 
-    const approval = await service.requestApproval(controlIntent());
+    const approval = await service.requestApproval('agent-1', controlIntent());
 
     const first = await service.resolve(approval.id, 'approved', 'alice', 'slack');
     const second = await service.resolve(approval.id, 'rejected', 'bob', 'telegram');
@@ -114,10 +115,10 @@ describe('ApprovalService', () => {
       timeoutDecision: 'rejected',
     });
 
-    const approval = await service.requestApproval(controlIntent());
+    const approval = await service.requestApproval('agent-1', controlIntent());
     await service.resolve(approval.id, 'rejected', 'alice', 'console');
 
-    const state = await store.getAgentState();
+    const state = await store.getAgentState('agent-1');
     expect(state.status).toBe('running'); // unchanged
     service.stop();
   });
@@ -130,14 +131,14 @@ describe('ApprovalService', () => {
       timeoutDecision: 'rejected',
     });
 
-    const approval = await service.requestApproval(controlIntent());
+    const approval = await service.requestApproval('agent-1', controlIntent());
     await wait(60);
 
     const stored = await store.getApproval(approval.id);
     expect(stored?.status).toBe('rejected');
     expect(stored?.channel).toBe('timeout');
     // Safe default is reject, so the agent must not have been paused.
-    expect((await store.getAgentState()).status).toBe('running');
+    expect((await store.getAgentState('agent-1')).status).toBe('running');
     service.stop();
   });
 
@@ -149,13 +150,35 @@ describe('ApprovalService', () => {
       timeoutDecision: 'rejected',
     });
 
-    const approval = await service.requestApproval(controlIntent());
+    const approval = await service.requestApproval('agent-1', controlIntent());
     await service.resolve(approval.id, 'approved', 'alice', 'console');
     await wait(60); // the timeout would have fired by now if not cancelled
 
     const stored = await store.getApproval(approval.id);
     expect(stored?.status).toBe('approved');
     expect(stored?.channel).toBe('console');
+    service.stop();
+  });
+
+  it('resolving one of two agents simultaneous pending approvals only affects that agent', async () => {
+    const service = new ApprovalService({
+      store,
+      notifiers: emptyNotifiers,
+      approvalTimeoutMs: 60_000,
+      timeoutDecision: 'rejected',
+    });
+
+    const approvalOne = await service.requestApproval('agent-1', controlIntent());
+    const approvalTwo = await service.requestApproval('agent-2', controlIntent());
+    expect(approvalOne.agentId).toBe('agent-1');
+    expect(approvalTwo.agentId).toBe('agent-2');
+
+    await service.resolve(approvalOne.id, 'approved', 'alice', 'console');
+
+    expect((await store.getAgentState('agent-1')).status).toBe('paused');
+    expect((await store.getAgentState('agent-2')).status).toBe('running'); // untouched
+    expect(await store.listPendingApprovals('agent-1')).toHaveLength(0);
+    expect(await store.listPendingApprovals('agent-2')).toHaveLength(1); // still pending
     service.stop();
   });
 });

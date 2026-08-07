@@ -65,6 +65,8 @@ export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired';
 /** A control action awaiting a human decision from any channel. */
 export interface Approval {
   id: string;
+  /** Which agent this approval targets. */
+  agentId: string;
   action: ActionType;
   severity: DriftSeverity;
   reasons: string[];
@@ -91,6 +93,38 @@ export interface AgentRuntimeState {
   updatedAt: number;
   reason?: string;
 }
+
+/**
+ * Registry entry for one monitored agent in the fleet — distinct from
+ * `AgentRuntimeState` (its mutable runtime status). A real fleet is normally
+ * many separately-deployed agent services, each with its own OTel
+ * `service.name`; this record maps a stable `id` (used throughout the
+ * control plane: approvals, drift history, action log, routes) to that
+ * agent's telemetry identity for querying.
+ */
+export interface AgentDefinition {
+  id: string;
+  name: string;
+  owner?: string;
+  /**
+   * OTel service.name for this agent's telemetry — used to build a
+   * per-agent PromQL label matcher (see PrometheusMetricsSource's
+   * `extraLabelMatchers`). Omit to register an agent for approval/control
+   * tracking only; the Autopilot scheduler skips drift detection for any
+   * agent with no serviceName.
+   */
+  serviceName?: string;
+  createdAt: number;
+}
+
+/**
+ * Agent ids that come from outside the process (e.g. a POST /agents body)
+ * must match this before being trusted as a Redis/composite-key segment —
+ * an unvalidated id containing `:` (RedisStateStore) or the cooldown-key
+ * separator could collide with another agent's keys. Ids generated internally
+ * via randomUUID() are safe by construction and don't need this check.
+ */
+export const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
 export interface DriftHistoryEntry {
   id: string;
@@ -136,14 +170,29 @@ export interface NotificationMessage {
  * Shared state, implemented by @driftwatch/server (Redis for multi-process,
  * in-memory for single-process/dev). All methods are async so the same
  * interface fits both a network store and a local map.
+ *
+ * Every method is scoped to one agent via a leading `agentId`, EXCEPT:
+ *   - `getApproval`/`resolveApproval` — id-only. Approval ids are globally
+ *     unique (randomUUID), and Slack/Telegram webhook callbacks only ever
+ *     carry the bare approval id, never an agentId — `Approval.agentId`
+ *     carries that information on the record instead of the method signature.
+ *   - `acquireLeaderLock` — stays global. One leader process runs the whole
+ *     fleet's drift cycle per tick; this isn't a per-agent concern.
  */
 export interface StateStore {
-  getAgentState(): Promise<AgentRuntimeState>;
-  setAgentState(state: AgentRuntimeState): Promise<void>;
+  // --- agent registry -----------------------------------------------------
+  /** Idempotent create-or-update, keyed by `definition.id`. */
+  upsertAgent(definition: AgentDefinition): Promise<void>;
+  getAgentDefinition(agentId: string): Promise<AgentDefinition | undefined>;
+  listAgents(): Promise<AgentDefinition[]>;
+
+  // --- runtime state --------------------------------------------------------
+  getAgentState(agentId: string): Promise<AgentRuntimeState>;
+  setAgentState(agentId: string, state: AgentRuntimeState): Promise<void>;
 
   createApproval(approval: Approval): Promise<void>;
   getApproval(id: string): Promise<Approval | undefined>;
-  listPendingApprovals(): Promise<Approval[]>;
+  listPendingApprovals(agentId: string): Promise<Approval[]>;
   /**
    * Atomically resolve a still-pending approval. Returns the updated approval,
    * or undefined if it was missing or already resolved (idempotency guard).
@@ -155,17 +204,19 @@ export interface StateStore {
     channel: string,
   ): Promise<Approval | undefined>;
 
-  recordDriftVerdict(entry: DriftHistoryEntry): Promise<void>;
-  listDriftHistory(limit: number): Promise<DriftHistoryEntry[]>;
+  recordDriftVerdict(agentId: string, entry: DriftHistoryEntry): Promise<void>;
+  listDriftHistory(agentId: string, limit: number): Promise<DriftHistoryEntry[]>;
 
-  recordAction(entry: ActionLogEntry): Promise<void>;
-  listActionLog(limit: number): Promise<ActionLogEntry[]>;
+  recordAction(agentId: string, entry: ActionLogEntry): Promise<void>;
+  listActionLog(agentId: string, limit: number): Promise<ActionLogEntry[]>;
 
   /**
-   * Returns true when the key was NOT recently seen (i.e. the caller may
-   * proceed) and records it for `ttlMs`; false while still in cooldown.
+   * Returns true when the (agentId, key) pair was NOT recently seen (i.e. the
+   * caller may proceed) and records it for `ttlMs`; false while still in
+   * cooldown. Per-agent so an action storm on one agent doesn't suppress a
+   * legitimate action for another.
    */
-  checkAndSetCooldown(key: string, ttlMs: number): Promise<boolean>;
+  checkAndSetCooldown(agentId: string, key: string, ttlMs: number): Promise<boolean>;
 
   /** Best-effort leader election so only one process runs a drift cycle. */
   acquireLeaderLock(key: string, ttlMs: number): Promise<boolean>;

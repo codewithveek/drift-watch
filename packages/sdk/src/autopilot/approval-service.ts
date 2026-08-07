@@ -56,10 +56,11 @@ export class ApprovalService {
    * Create a pending approval for a control action intent, broadcast it to
    * every notifier (with Approve/Reject affordances), and arm the timeout.
    */
-  async requestApproval(intent: ActionIntent): Promise<Approval> {
+  async requestApproval(agentId: string, intent: ActionIntent): Promise<Approval> {
     const now = Date.now();
     const approval: Approval = {
       id: randomUUID(),
+      agentId,
       action: intent.type,
       severity: intent.severity,
       reasons: intent.reason ? [intent.reason] : [],
@@ -70,10 +71,15 @@ export class ApprovalService {
     };
     await this.store.createApproval(approval);
 
+    // Name the agent in the notification — once a second agent exists, a bare
+    // "Approval needed: pause_agent" in a shared Slack channel is ambiguous.
+    const agentDefinition = await this.store.getAgentDefinition(agentId);
+    const agentLabel = agentDefinition?.name ?? agentId;
+
     await notifyAll(
       this.notifiers,
       {
-        title: `Approval needed: ${intent.type}`,
+        title: `Approval needed: ${intent.type} (${agentLabel})`,
         severity: intent.severity,
         reasons: approval.reasons,
         recommendedAction: approval.recommendedAction,
@@ -105,12 +111,14 @@ export class ApprovalService {
     this.clearTimeout(id);
 
     if (decision === 'approved') {
-      await executeControlAction(this.store, resolved.action, {
+      const agentDefinition = await this.store.getAgentDefinition(resolved.agentId);
+      await executeControlAction(this.store, resolved.agentId, resolved.action, {
         reason: `approved via ${channel} by ${actor}`,
         actor,
         channel,
         severity: resolved.severity,
         targetModel: this.switchModelTo,
+        serviceName: agentDefinition?.serviceName,
       });
     }
 

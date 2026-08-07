@@ -15,6 +15,8 @@ describe('ServerConfigSchema', () => {
       driftDryRun: false,
       rateLimitMax: 100,
       rateLimitWindowMs: 60_000,
+      agentId: 'default',
+      agentName: '',
       redisUrl: '',
       autopilotEnabled: false,
       autopilotMode: 'shadow',
@@ -33,9 +35,27 @@ describe('ServerConfigSchema', () => {
       policiesFile: '',
     });
   });
+
+  it('rejects an agentId that does not match AGENT_ID_PATTERN', () => {
+    expect(() => ServerConfigSchema.parse({ agentId: 'has a space' })).toThrow();
+  });
+
+  it('accepts a valid custom agentId', () => {
+    const config = ServerConfigSchema.parse({ agentId: 'finance-agent-prod' });
+    expect(config.agentId).toBe('finance-agent-prod');
+  });
 });
 
 describe('loadServerConfigFromEnv', () => {
+  it('reads AGENT_ID and AGENT_NAME', () => {
+    const config = loadServerConfigFromEnv({
+      AGENT_ID: 'checkout-agent',
+      AGENT_NAME: 'Checkout Agent',
+    } as NodeJS.ProcessEnv);
+    expect(config.agentId).toBe('checkout-agent');
+    expect(config.agentName).toBe('Checkout Agent');
+  });
+
   it('reads booleans correctly from "1"/absent rather than JS string truthiness', () => {
     const config = loadServerConfigFromEnv({
       TRUST_PROXY: '1',

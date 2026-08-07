@@ -49,19 +49,36 @@ function getModelSwitchCounter(): Counter {
  * backend) plus a counter increment (the low-cardinality signal the drift
  * detector queries to avoid flagging the intended change as drift). `from` is
  * the model before the switch, `to` after.
+ *
+ * This function runs inside the SERVER's own process, not the target agent's —
+ * so the span/counter would otherwise carry the SERVER's OTel resource
+ * attributes (its own service.name), not the agent's. That would silently
+ * break per-agent Prometheus filtering (PrometheusMetricsSource's
+ * extraLabelMatchers) for every agent except one that happens to share the
+ * server's service.name. Fixed by attaching `agent.id`/`service_name` as
+ * explicit POINT attributes sourced from the agent's own AgentDefinition,
+ * rather than relying on process-wide resource identity.
  */
 function recordModelSwitchMarker(
+  agentId: string,
   from: string | undefined,
   to: string,
   reason: string,
+  serviceName: string | undefined,
 ): void {
   const attributes = {
     'agent.model.from': from ?? 'default',
     'agent.model.to': to,
     'agent.control.reason': reason,
+    'agent.id': agentId,
+    ...(serviceName ? { service_name: serviceName } : {}),
   };
   tracer.startSpan('agent.model.switch', { attributes }).end();
-  getModelSwitchCounter().add(1, { from_model: from ?? 'default', to_model: to });
+  getModelSwitchCounter().add(1, {
+    from_model: from ?? 'default',
+    to_model: to,
+    ...(serviceName ? { service_name: serviceName } : {}),
+  });
 }
 
 export interface ControlActionContext {
@@ -74,6 +91,13 @@ export interface ControlActionContext {
   severity?: DriftSeverity;
   /** Target model id for switch_model. */
   targetModel?: string;
+  /**
+   * The target agent's OTel service.name, if known — attached to the
+   * agent.model.switch span/counter so per-agent metric filtering can find
+   * it. See recordModelSwitchMarker's docblock for why this can't come from
+   * process-wide resource attributes.
+   */
+  serviceName?: string;
 }
 
 export interface ControlActionResult {
@@ -89,21 +113,28 @@ export interface ControlActionResult {
  */
 export async function executeControlAction(
   store: StateStore,
+  agentId: string,
   action: ActionType,
   context: ControlActionContext,
 ): Promise<ControlActionResult> {
-  const current = await store.getAgentState();
+  const current = await store.getAgentState(agentId);
   const next = applyAction(current, action, context);
   const applied = next !== current;
 
   if (applied) {
-    await store.setAgentState(next);
+    await store.setAgentState(agentId, next);
     if (action === 'switch_model') {
-      recordModelSwitchMarker(current.activeModel, next.activeModel ?? '', context.reason);
+      recordModelSwitchMarker(
+        agentId,
+        current.activeModel,
+        next.activeModel ?? '',
+        context.reason,
+        context.serviceName,
+      );
     }
   }
 
-  await store.recordAction(toLogEntry(action, applied, context));
+  await store.recordAction(agentId, toLogEntry(action, applied, context));
 
   return { action, applied, state: next };
 }

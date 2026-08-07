@@ -16,7 +16,7 @@ import {
 } from '@driftwatch/sdk';
 import type { ServerConfig } from '../config/server-config.js';
 import { loadPolicyConfig } from '../config/policy-loader.js';
-import { createMetricsQuerySource } from '../config/metrics-source.js';
+import { createMetricsQuerySourceFor } from '../config/metrics-source.js';
 import { createStateStore } from '../state/index.js';
 import { createNotifiers, type NotifierRegistry } from '../notify/index.js';
 
@@ -30,15 +30,31 @@ export interface Autopilot {
   shutdown(): Promise<void>;
 }
 
-export function createAutopilot(options: {
+export async function createAutopilot(options: {
   serverConfig: ServerConfig;
   driftWatchConfig: DriftWatchConfig;
   modelClient: ModelClient;
   logger: SchedulerLogger;
-}): Autopilot {
+}): Promise<Autopilot> {
   const { serverConfig, driftWatchConfig, modelClient, logger } = options;
 
   const store = createStateStore(serverConfig.redisUrl);
+
+  // Backward-compat auto-registration: if no agents are registered yet,
+  // register one derived from this server's own config, so existing
+  // single-agent deployments (docker-compose.yml et al.) need zero new
+  // configuration. Idempotent — a second process racing on an empty registry
+  // just upserts the same id, which is harmless.
+  const existingAgents = await store.listAgents();
+  if (existingAgents.length === 0) {
+    await store.upsertAgent({
+      id: serverConfig.agentId,
+      name: serverConfig.agentName || driftWatchConfig.telemetry.serviceName,
+      serviceName: driftWatchConfig.telemetry.serviceName,
+      createdAt: Date.now(),
+    });
+  }
+
   const notifiers = createNotifiers(serverConfig);
   const approvalService = new ApprovalService({
     store,
@@ -57,7 +73,8 @@ export function createAutopilot(options: {
       approvalService,
       modelClient,
       policyConfig: loadPolicyConfig(serverConfig),
-      metricsQuerySource: createMetricsQuerySource(driftWatchConfig.driftDetection),
+      metricsQuerySourceFor: (agent) =>
+        createMetricsQuerySourceFor(driftWatchConfig.driftDetection, agent),
       isDryRun: serverConfig.driftDryRun,
       scanIntervalMs: serverConfig.scanIntervalMs,
       cooldownMs: serverConfig.cooldownMs,

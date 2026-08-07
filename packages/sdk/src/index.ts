@@ -66,6 +66,7 @@ export {
 export {
   ACTION_TYPES,
   CONTROL_ACTIONS,
+  AGENT_ID_PATTERN,
   categorizeAction,
   type ActionType,
   type ActionCategory,
@@ -75,6 +76,7 @@ export {
   type ApprovalStatus,
   type AgentRuntimeState,
   type AgentStatus,
+  type AgentDefinition,
   type DriftHistoryEntry,
   type ActionLogEntry,
   type ActionOutcome,
@@ -115,4 +117,5 @@ export {
   AutopilotScheduler,
   type SchedulerLogger,
   type AutopilotSchedulerOptions,
+  type AgentCycleResult,
 } from './autopilot/scheduler.js';

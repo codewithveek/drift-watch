@@ -106,4 +106,53 @@ describe('PrometheusMetricsSource', () => {
       source.queryModelSwitchCount({ startTimeMs: 0, endTimeMs: 60_000 }),
     ).rejects.toThrow(/Prometheus query failed: 500/);
   });
+
+  it('splices extraLabelMatchers into all four PromQL queries (per-agent filtering)', async () => {
+    const seenQueries: string[] = [];
+    fetchMock.mockImplementation(async (url: URL) => {
+      seenQueries.push(url.searchParams.get('query') ?? '');
+      return { ok: true, json: async () => vectorResponse([]) };
+    });
+
+    const source = new PrometheusMetricsSource({
+      baseUrl: 'http://localhost:9090',
+      extraLabelMatchers: { service_name: 'checkout-agent' },
+    });
+    await source.queryWindowStats({ windowLabel: 'current', startTimeMs: 0, endTimeMs: 3_600_000 });
+    await source.queryModelSwitchCount({ startTimeMs: 0, endTimeMs: 3_600_000 });
+
+    expect(seenQueries).toHaveLength(4);
+    for (const query of seenQueries) {
+      expect(query).toContain('{service_name="checkout-agent"}');
+    }
+    expect(seenQueries[0]).toBe(
+      'sum by (tool, outcome) (increase(agent_tool_calls_total{service_name="checkout-agent"}[3600s]))',
+    );
+    expect(seenQueries[3]).toBe(
+      'sum(increase(agent_model_switches_total{service_name="checkout-agent"}[3600s]))',
+    );
+  });
+
+  it('escapes quotes/backslashes in matcher values', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => vectorResponse([]) });
+
+    const source = new PrometheusMetricsSource({
+      baseUrl: 'http://localhost:9090',
+      extraLabelMatchers: { service_name: 'weird"name\\here' },
+    });
+    await source.queryModelSwitchCount({ startTimeMs: 0, endTimeMs: 60_000 });
+
+    const query = fetchMock.mock.calls[0][0].searchParams.get('query');
+    expect(query).toContain('service_name="weird\\"name\\\\here"');
+  });
+
+  it('omits the matcher clause entirely when extraLabelMatchers is unset', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => vectorResponse([]) });
+
+    const source = new PrometheusMetricsSource({ baseUrl: 'http://localhost:9090' });
+    await source.queryModelSwitchCount({ startTimeMs: 0, endTimeMs: 60_000 });
+
+    const query = fetchMock.mock.calls[0][0].searchParams.get('query');
+    expect(query).toBe('sum(increase(agent_model_switches_total[60s]))');
+  });
 });

@@ -53,6 +53,14 @@ export interface ActionLogEntry {
   channel?: string;
 }
 
+export interface AgentDefinition {
+  id: string;
+  name: string;
+  owner?: string;
+  serviceName?: string;
+  createdAt: number;
+}
+
 const TOKEN_KEY = 'driftwatch.token';
 
 export function getToken(): string {
@@ -81,18 +89,21 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const client = {
-  getState: () => api<StateResponse>('/state'),
-  getApprovals: () => api<{ approvals: Approval[] }>('/approvals'),
-  getDriftHistory: () => api<{ history: DriftHistoryEntry[] }>('/drift/history'),
-  getActionLog: () => api<{ log: ActionLogEntry[] }>('/actions/log'),
-  resolveApproval: (id: string, decision: 'approved' | 'rejected') =>
-    api<{ approval: Approval }>(`/approvals/${id}/resolve`, {
+  getAgents: () => api<{ agents: AgentDefinition[] }>('/agents'),
+  getState: (agentId: string) => api<StateResponse>(`/agents/${agentId}/state`),
+  getApprovals: (agentId: string) => api<{ approvals: Approval[] }>(`/agents/${agentId}/approvals`),
+  getDriftHistory: (agentId: string) =>
+    api<{ history: DriftHistoryEntry[] }>(`/agents/${agentId}/drift/history`),
+  getActionLog: (agentId: string) => api<{ log: ActionLogEntry[] }>(`/agents/${agentId}/actions/log`),
+  resolveApproval: (agentId: string, id: string, decision: 'approved' | 'rejected') =>
+    api<{ approval: Approval }>(`/agents/${agentId}/approvals/${id}/resolve`, {
       method: 'POST',
       body: JSON.stringify({ decision, actor: 'console' }),
     }),
-  control: (action: 'pause' | 'resume' | 'rollback') =>
-    api<{ applied: boolean; state: AgentRuntimeState }>(`/control/${action}`, {
+  control: (agentId: string, action: 'pause' | 'resume' | 'rollback') =>
+    api<{ applied: boolean; state: AgentRuntimeState }>(`/agents/${agentId}/control/${action}`, {
       method: 'POST',
     }),
-  scan: () => api<{ verdict: unknown; intents: unknown[] }>('/drift/scan', { method: 'POST' }),
+  scan: (agentId: string) =>
+    api<{ verdict: unknown; intents: unknown[] }>(`/agents/${agentId}/drift/scan`, { method: 'POST' }),
 };

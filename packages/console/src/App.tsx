@@ -4,6 +4,7 @@ import {
   getToken,
   setToken,
   type ActionLogEntry,
+  type AgentDefinition,
   type AgentStatus,
   type Approval,
   type DriftHistoryEntry,
@@ -35,6 +36,12 @@ const STATUS_LABEL: Record<AgentStatus, string> = {
 
 export function App() {
   const [token, setTokenState] = useState(getToken());
+  const [agents, setAgents] = useState<AgentDefinition[]>([]);
+  // Not yet a fleet UI (list/grid, routing) — that's a later phase. This just
+  // keeps the existing single-agent view pointed at whichever agent is
+  // selected, defaulting to the first one the server reports (normally the
+  // auto-registered default agent for a single-agent deployment).
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [state, setState] = useState<StateResponse | null>(null);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [drift, setDrift] = useState<DriftHistoryEntry[]>([]);
@@ -47,14 +54,34 @@ export function App() {
   const [pendingApproval, setPendingApproval] = useState<string | null>(null);
   const [pendingControl, setPendingControl] = useState<string | null>(null);
 
+  // Discover the fleet once (and again if the token changes, since /agents is
+  // itself bearer-gated) — separate from the per-agent poll below.
+  useEffect(() => {
+    let cancelled = false;
+    client
+      .getAgents()
+      .then((res) => {
+        if (cancelled) return;
+        setAgents(res.agents);
+        setSelectedAgentId((current) => current ?? res.agents[0]?.id ?? null);
+      })
+      .catch((err) => {
+        if (!cancelled) setError((err as Error).message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
   const refresh = useCallback(async () => {
+    if (!selectedAgentId) return;
     setRefreshing(true);
     try {
       const [s, a, d, l] = await Promise.all([
-        client.getState(),
-        client.getApprovals(),
-        client.getDriftHistory(),
-        client.getActionLog(),
+        client.getState(selectedAgentId),
+        client.getApprovals(selectedAgentId),
+        client.getDriftHistory(selectedAgentId),
+        client.getActionLog(selectedAgentId),
       ]);
       setState(s);
       setApprovals(a.approvals);
@@ -68,13 +95,14 @@ export function App() {
       setLoaded(true);
       setRefreshing(false);
     }
-  }, []);
+  }, [selectedAgentId]);
 
   useEffect(() => {
+    if (!selectedAgentId) return;
     void refresh();
     const id = setInterval(() => void refresh(), POLL_MS);
     return () => clearInterval(id);
-  }, [refresh]);
+  }, [refresh, selectedAgentId]);
 
   // Keep relative timestamps ("3s ago") live between polls.
   useEffect(() => {
@@ -83,9 +111,10 @@ export function App() {
   }, []);
 
   const onResolve = async (id: string, decision: 'approved' | 'rejected') => {
+    if (!selectedAgentId) return;
     setPendingApproval(id);
     try {
-      await client.resolveApproval(id, decision);
+      await client.resolveApproval(selectedAgentId, id, decision);
       await refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -95,9 +124,10 @@ export function App() {
   };
 
   const onControl = async (action: 'pause' | 'resume' | 'rollback') => {
+    if (!selectedAgentId) return;
     setPendingControl(action);
     try {
-      await client.control(action);
+      await client.control(selectedAgentId, action);
       await refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -107,9 +137,10 @@ export function App() {
   };
 
   const onScan = async () => {
+    if (!selectedAgentId) return;
     setPendingControl('scan');
     try {
-      await client.scan();
+      await client.scan(selectedAgentId);
       await refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -126,6 +157,9 @@ export function App() {
         refreshing={refreshing}
         lastSyncAt={lastSyncAt}
         now={now}
+        agents={agents}
+        selectedAgentId={selectedAgentId}
+        onSelectAgent={setSelectedAgentId}
         onSaveToken={(t) => {
           setToken(t);
           setTokenState(t);
@@ -170,6 +204,9 @@ function TopBar({
   refreshing,
   lastSyncAt,
   now,
+  agents,
+  selectedAgentId,
+  onSelectAgent,
   onSaveToken,
 }: {
   state: StateResponse | null;
@@ -177,6 +214,9 @@ function TopBar({
   refreshing: boolean;
   lastSyncAt: number | null;
   now: number;
+  agents: AgentDefinition[];
+  selectedAgentId: string | null;
+  onSelectAgent: (agentId: string) => void;
   onSaveToken: (t: string) => void;
 }) {
   return (
@@ -196,6 +236,20 @@ function TopBar({
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3">
+          {agents.length > 1 && (
+            <select
+              aria-label="Select agent"
+              value={selectedAgentId ?? ''}
+              onChange={(e) => onSelectAgent(e.target.value)}
+              className="hidden h-9 rounded-lg bg-panel px-2.5 text-sm font-medium text-ink-2 ring-1 ring-inset ring-line sm:block"
+            >
+              {agents.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          )}
           {state && (
             <span className="hidden items-center gap-2 rounded-lg bg-panel px-2.5 py-1.5 text-sm font-medium text-ink-2 ring-1 ring-inset ring-line sm:inline-flex">
               <StatusDot status={state.agent.status} ping />

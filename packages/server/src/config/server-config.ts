@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AGENT_ID_PATTERN } from '@driftwatch/sdk';
 /**
  * Typed config for the parts of this server that are specific to *this*
  * Fastify app rather than the SDK (HTTP port/host, auth, body limits). Mirrors
@@ -21,6 +22,17 @@ export const ServerConfigSchema = z.object({
   /** Max requests per client (by IP, or by bearer token when set) per rateLimitWindowMs on /run and /drift. */
   rateLimitMax: z.coerce.number().int().positive().default(100),
   rateLimitWindowMs: z.coerce.number().int().positive().default(60_000),
+
+  // --- Fleet identity (this server's own auto-registered default agent) ---
+  /**
+   * Registry id for the one agent this server auto-registers at boot if the
+   * registry is empty — what keeps existing single-agent deployments working
+   * with zero new required config. Must match AGENT_ID_PATTERN
+   * (`^[a-zA-Z0-9_-]+$`) since it's composed into Redis/cooldown keys.
+   */
+  agentId: z.string().regex(AGENT_ID_PATTERN).default('default'),
+  /** Empty = derive from OTEL_SERVICE_NAME (driftWatchConfig.telemetry.serviceName) at use-site. */
+  agentName: z.string().default(''),
 
   // --- Autopilot (Loop 2) -------------------------------------------------
   /** Redis connection URL. Empty = in-memory store (single-process/dev). */
@@ -78,6 +90,8 @@ export function loadServerConfigFromEnv(
     driftDryRun: env.DRIFT_DRY_RUN === '1',
     rateLimitMax: env.RATE_LIMIT_MAX,
     rateLimitWindowMs: env.RATE_LIMIT_WINDOW_MS,
+    agentId: env.AGENT_ID,
+    agentName: env.AGENT_NAME,
     redisUrl: env.REDIS_URL,
     autopilotEnabled: env.AUTOPILOT_ENABLED === '1',
     autopilotMode: env.AUTOPILOT_MODE,

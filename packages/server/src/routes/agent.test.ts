@@ -62,16 +62,27 @@ function buildServerConfig(overrides: Partial<ServerConfig> = {}): ServerConfig 
     driftDryRun: false,
     rateLimitMax: 100,
     rateLimitWindowMs: 60_000,
+    agentId: 'default',
+    agentName: '',
     ...overrides,
   };
 }
 
 let currentServer: FastifyInstance | undefined;
+let currentStore: MemoryStateStore | undefined;
 
 async function buildTestServer(
   serverConfigOverrides: Partial<ServerConfig> = {},
+  modelRegistry: Record<string, ModelClient> = {},
 ): Promise<FastifyInstance> {
   const serverConfig = buildServerConfig(serverConfigOverrides);
+  const store = new MemoryStateStore();
+  // Mirrors createAutopilot's boot-time auto-registration, so /run and
+  // /drift's bare aliases (which resolve to serverConfig.agentId) have a
+  // real agent to look up.
+  await store.upsertAgent({ id: serverConfig.agentId, name: 'Default Agent', createdAt: Date.now() });
+  currentStore = store;
+
   const fastifyServer = Fastify({ logger: false });
   await fastifyServer.register(rateLimit, {
     global: false,
@@ -80,8 +91,8 @@ async function buildTestServer(
   });
   await registerRoutes(fastifyServer, {
     modelClient: 'fake-model' as unknown as ModelClient,
-    modelRegistry: {},
-    store: new MemoryStateStore(),
+    modelRegistry,
+    store,
     tools: {},
     serverConfig,
     driftWatchConfig: DriftWatchConfigSchema.parse({}),
@@ -286,5 +297,90 @@ describe('rate limiting', () => {
       payload: { prompt: 'hi' },
     });
     expect(second.statusCode).toBe(429);
+  });
+});
+
+describe('agent-scoped /run and /drift', () => {
+  it('bare /run resolves to the auto-registered default agent (picks up its activeModel)', async () => {
+    const switchedModel = 'switched-model-client' as unknown as ModelClient;
+    const server = await buildTestServer({ authToken: 'secret' }, { switched: switchedModel });
+    await currentStore!.setAgentState('default', {
+      status: 'running',
+      activeModel: 'switched',
+      activeVersion: 1,
+      updatedAt: Date.now(),
+    });
+
+    const response = await server.inject({
+      method: 'POST',
+      url: '/run',
+      headers: { authorization: 'Bearer secret' },
+      payload: { prompt: 'hi' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(runAgentTaskMock).toHaveBeenCalledWith(
+      expect.objectContaining({ modelClient: switchedModel }),
+    );
+  });
+
+  it('/agents/:agentId/run is scoped independently from the default agent and from other agents', async () => {
+    const defaultModel = 'default-switched' as unknown as ModelClient;
+    const otherModel = 'other-switched' as unknown as ModelClient;
+    const server = await buildTestServer(
+      { authToken: 'secret' },
+      { 'default-model-id': defaultModel, 'other-model-id': otherModel },
+    );
+    await currentStore!.upsertAgent({ id: 'agent-2', name: 'Agent Two', createdAt: Date.now() });
+    await currentStore!.setAgentState('default', {
+      status: 'running',
+      activeModel: 'default-model-id',
+      activeVersion: 1,
+      updatedAt: Date.now(),
+    });
+    await currentStore!.setAgentState('agent-2', {
+      status: 'running',
+      activeModel: 'other-model-id',
+      activeVersion: 1,
+      updatedAt: Date.now(),
+    });
+
+    await server.inject({
+      method: 'POST',
+      url: '/agents/agent-2/run',
+      headers: { authorization: 'Bearer secret' },
+      payload: { prompt: 'hi' },
+    });
+    expect(runAgentTaskMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ modelClient: otherModel }),
+    );
+
+    await server.inject({
+      method: 'POST',
+      url: '/run',
+      headers: { authorization: 'Bearer secret' },
+      payload: { prompt: 'hi' },
+    });
+    expect(runAgentTaskMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ modelClient: defaultModel }),
+    );
+  });
+
+  it('both /agents/:agentId/drift and the bare /drift alias are reachable', async () => {
+    const server = await buildTestServer({ authToken: 'secret' });
+
+    const scoped = await server.inject({
+      method: 'GET',
+      url: '/agents/default/drift',
+      headers: { authorization: 'Bearer secret' },
+    });
+    expect(scoped.statusCode).toBe(200);
+    expect(scoped.json()).toEqual(fakeDriftReport);
+
+    const bare = await server.inject({
+      method: 'GET',
+      url: '/drift',
+      headers: { authorization: 'Bearer secret' },
+    });
+    expect(bare.statusCode).toBe(200);
   });
 });

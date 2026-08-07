@@ -4,13 +4,13 @@ import tailwindcss from '@tailwindcss/vite';
 
 // Served in production from the server at /console/ (see server.ts @fastify/static).
 // In dev, the API paths are proxied to the Fastify server on :3000 so the
-// console can run on :5173 with the same fetch('/state') calls as in prod.
+// console can run on :5173 with the same fetch('/agents/...') calls as in
+// prod. Every console-facing route is now nested under /agents/:agentId/...
+// (or /agents itself for list/register) except the fleet-wide /drift/scan
+// and bare /drift alias (both under /drift) and /health.
 const API_PATHS = [
-  '/state',
-  '/approvals',
+  '/agents',
   '/drift',
-  '/actions',
-  '/control',
   '/health',
 ];
 

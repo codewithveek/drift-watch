@@ -36,7 +36,7 @@ await fastifyServer.register(rateLimit, {
 });
 
 // --- Autopilot (Loop 2) composition ---------------------------------------
-const autopilot = createAutopilot({
+const autopilot = await createAutopilot({
   serverConfig,
   driftWatchConfig,
   modelClient,

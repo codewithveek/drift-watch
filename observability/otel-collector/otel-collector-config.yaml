@@ -25,6 +25,14 @@ exporters:
   # directly into Prometheus's data model — no conversion processor needed.
   prometheus:
     endpoint: 0.0.0.0:8889
+    # Without this, resource attributes (service.name, deployment.environment,
+    # agent.kind) are dropped entirely — the exporter's default is OFF. This is
+    # what makes an agent's identity (service.name -> the `service_name` label,
+    # Prometheus label-naming replaces disallowed characters with `_`) visible
+    # for per-agent PromQL filtering (see PrometheusMetricsSource's
+    # extraLabelMatchers).
+    resource_to_telemetry_conversion:
+      enabled: true
 
 processors:
   batch: {}

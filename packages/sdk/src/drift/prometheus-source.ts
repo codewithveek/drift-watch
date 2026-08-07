@@ -37,6 +37,17 @@ export interface PrometheusMetricsSourceOptions {
   bearerToken?: string;
   /** Override the OTel->Prometheus metric names if your pipeline renames them. */
   metricNames?: Partial<PrometheusMetricNames>;
+  /**
+   * Extra PromQL label matchers ANDed onto every query this instance issues,
+   * e.g. `{ service_name: 'checkout-agent' }` to scope all four metrics to
+   * one fleet member (requires the OTel Collector's prometheus exporter to
+   * have `resource_to_telemetry_conversion.enabled: true`, which is what
+   * promotes `service.name` into this `service_name` label in the first
+   * place — see observability/otel-collector/otel-collector-config.yaml).
+   * Not tied to any specific label name, so callers can filter on whatever
+   * their pipeline promotes.
+   */
+  extraLabelMatchers?: Record<string, string>;
 }
 
 interface PrometheusVectorSample {
@@ -52,10 +63,12 @@ interface PrometheusQueryResponse {
 export class PrometheusMetricsSource implements MetricsQuerySource {
   private readonly options: PrometheusMetricsSourceOptions;
   private readonly metricNames: PrometheusMetricNames;
+  private readonly matcherClause: string;
 
   constructor(options: PrometheusMetricsSourceOptions) {
     this.options = options;
     this.metricNames = { ...DEFAULT_METRIC_NAMES, ...options.metricNames };
+    this.matcherClause = buildMatcherClause(options.extraLabelMatchers);
   }
 
   async queryWindowStats(options: {
@@ -67,17 +80,18 @@ export class PrometheusMetricsSource implements MetricsQuerySource {
     const rangeSeconds = toRangeSeconds(startTimeMs, endTimeMs);
     const atSeconds = endTimeMs / 1000;
     const { toolCalls, toolDurationBucket, tokens } = this.metricNames;
+    const matcher = this.matcherClause;
 
     const [toolCallSamples, p95LatencyMs, tokenSpend] = await Promise.all([
       this.queryVector(
-        `sum by (tool, outcome) (increase(${toolCalls}[${rangeSeconds}s]))`,
+        `sum by (tool, outcome) (increase(${toolCalls}${matcher}[${rangeSeconds}s]))`,
         atSeconds,
       ),
       this.queryScalar(
-        `histogram_quantile(0.95, sum by (le) (rate(${toolDurationBucket}[${rangeSeconds}s])))`,
+        `histogram_quantile(0.95, sum by (le) (rate(${toolDurationBucket}${matcher}[${rangeSeconds}s])))`,
         atSeconds,
       ),
-      this.queryScalar(`sum(increase(${tokens}[${rangeSeconds}s]))`, atSeconds),
+      this.queryScalar(`sum(increase(${tokens}${matcher}[${rangeSeconds}s]))`, atSeconds),
     ]);
 
     return {
@@ -95,7 +109,7 @@ export class PrometheusMetricsSource implements MetricsQuerySource {
     const rangeSeconds = toRangeSeconds(options.startTimeMs, options.endTimeMs);
     const atSeconds = options.endTimeMs / 1000;
     return this.queryScalar(
-      `sum(increase(${this.metricNames.modelSwitches}[${rangeSeconds}s]))`,
+      `sum(increase(${this.metricNames.modelSwitches}${this.matcherClause}[${rangeSeconds}s]))`,
       atSeconds,
     );
   }
@@ -138,6 +152,20 @@ export class PrometheusMetricsSource implements MetricsQuerySource {
 
 function toRangeSeconds(startTimeMs: number, endTimeMs: number): number {
   return Math.max(1, Math.round((endTimeMs - startTimeMs) / 1000));
+}
+
+/** Escapes a value for a PromQL string literal (backslash and double-quote). */
+function escapePromqlLabelValue(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/** Builds a `{key="value",...}` matcher clause, or '' when there's nothing to filter on. */
+function buildMatcherClause(matchers: Record<string, string> | undefined): string {
+  if (!matchers) return '';
+  const entries = Object.entries(matchers);
+  if (entries.length === 0) return '';
+  const parts = entries.map(([key, value]) => `${key}="${escapePromqlLabelValue(value)}"`);
+  return `{${parts.join(',')}}`;
 }
 
 function summarizeToolCallSamples(

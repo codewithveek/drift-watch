@@ -7,15 +7,25 @@ import 'dotenv/config';
 import { detectBehavioralDrift, loadDriftWatchConfigFromEnv } from '@driftwatch/sdk';
 import { loadServerConfigFromEnv } from '../config/server-config.js';
 import { modelClient } from '../config/model-client.js';
-import { createMetricsQuerySource } from '../config/metrics-source.js';
+import { createMetricsQuerySourceFor } from '../config/metrics-source.js';
 
 const driftWatchConfig = loadDriftWatchConfigFromEnv();
 const serverConfig = loadServerConfigFromEnv();
 
+// The CLI doesn't share state with a running server (no store round-trip),
+// so it builds an ad hoc AgentDefinition from its own config rather than
+// looking one up from the registry.
+const agent = {
+  id: serverConfig.agentId,
+  name: serverConfig.agentName || driftWatchConfig.telemetry.serviceName,
+  serviceName: driftWatchConfig.telemetry.serviceName,
+  createdAt: Date.now(),
+};
+
 detectBehavioralDrift({
   modelClient,
   isDryRun: serverConfig.driftDryRun,
-  metricsQuerySource: createMetricsQuerySource(driftWatchConfig.driftDetection),
+  metricsQuerySource: createMetricsQuerySourceFor(driftWatchConfig.driftDetection, agent),
 })
   .then((driftReport) => {
     console.log(JSON.stringify(driftReport, null, 2));
