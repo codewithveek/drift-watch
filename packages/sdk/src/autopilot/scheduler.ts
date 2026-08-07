@@ -7,8 +7,9 @@
  * deployment — this lock is GLOBAL, not per-agent: one leader loops the whole
  * fleet sequentially within a tick) walks `store.listAgents()` and, for each:
  *   1. perceive — detectBehavioralDrift over that agent's metrics-source
- *      windows (or fixtures); agents with no metrics source (no serviceName
- *      registered) are skipped — they're tracked for approvals/control only.
+ *      windows (or fixtures); agents with `driftDetectionEnabled: false` or
+ *      no metrics source are skipped — they're tracked for approvals/control
+ *      only.
  *   2. reason   — evaluatePolicies maps the report to ActionIntents,
  *   3. act      — notify_* intents fire immediately; control intents open an
  *                 approval. A per-agent, per-action cooldown dedups storms.
@@ -40,8 +41,13 @@ export interface AgentCycleResult {
   agentId: string;
   report?: DriftReport;
   intents: ActionIntent[];
-  /** Set when drift detection was skipped for this agent (no metrics source). */
-  skipped?: 'no-metrics-source';
+  /**
+   * Set when drift detection was skipped for this agent: 'disabled' means
+   * `agent.driftDetectionEnabled === false` (an explicit operator choice);
+   * 'no-metrics-source' means `metricsQuerySourceFor` returned undefined for
+   * some other reason (e.g. a Prometheus/server-config gap).
+   */
+  skipped?: 'no-metrics-source' | 'disabled';
 }
 
 export interface AutopilotSchedulerOptions {
@@ -51,9 +57,8 @@ export interface AutopilotSchedulerOptions {
   modelClient: ModelClient;
   policyConfig: PolicyConfig;
   /**
-   * Builds a MetricsQuerySource for one agent, or undefined if that agent has
-   * no serviceName registered (drift detection is skipped for it — it's
-   * tracked for approvals/control only).
+   * Builds a MetricsQuerySource for one agent, or undefined if drift
+   * detection can't proceed for it (e.g. a metrics-backend config gap).
    */
   metricsQuerySourceFor: (agent: AgentDefinition) => MetricsQuerySource | undefined;
   isDryRun: boolean;
@@ -142,12 +147,22 @@ export class AutopilotScheduler {
   private async runAgentCycle(agent: AgentDefinition, trigger: string): Promise<AgentCycleResult> {
     const { store, modelClient, metricsQuerySourceFor, isDryRun, policyConfig } = this.options;
 
+    if (agent.driftDetectionEnabled === false) {
+      return { agentId: agent.id, intents: [], skipped: 'disabled' };
+    }
+
     const metricsQuerySource = metricsQuerySourceFor(agent);
     if (!metricsQuerySource && !isDryRun) {
       return { agentId: agent.id, intents: [], skipped: 'no-metrics-source' };
     }
 
-    const report = await detectBehavioralDrift({ modelClient, isDryRun, metricsQuerySource });
+    const report = await detectBehavioralDrift({
+      modelClient,
+      isDryRun,
+      metricsQuerySource,
+      agentId: agent.id,
+      serviceName: agent.serviceName,
+    });
 
     await store.recordDriftVerdict(agent.id, {
       id: randomUUID(),

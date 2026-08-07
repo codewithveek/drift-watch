@@ -17,6 +17,7 @@ import {
   type Span,
 } from '@opentelemetry/api';
 import { isCapturePayloadsEnabled } from './capture-config.js';
+import { buildAgentLabels } from './agent-labels.js';
 
 const tracer = trace.getTracer('driftwatch');
 
@@ -55,19 +56,25 @@ export interface WithSkillExecutionSpanOptions<SkillResult> {
   skillName: string;
   skillInput: unknown;
   executeSkill: (span: Span) => Promise<SkillResult>;
+  /** Attributes the span + counter/histogram to this agent — see buildAgentLabels. */
+  agentId?: string;
+  /** The agent's OTel service.name, if known — see buildAgentLabels. */
+  serviceName?: string;
 }
 
 /** Wraps a skill (tool) call. Every invocation -> one span + counter increment. */
 export async function withSkillExecutionSpan<SkillResult>(
   options: WithSkillExecutionSpanOptions<SkillResult>,
 ): Promise<SkillResult> {
-  const { skillName, skillInput, executeSkill } = options;
+  const { skillName, skillInput, executeSkill, agentId, serviceName } = options;
   const executionStartTimeMs = performance.now();
   const { calls: skillInvocationCounter, duration: skillExecutionDurationHistogram } =
     getSkillInstruments();
+  const agentLabels = buildAgentLabels(agentId, serviceName);
 
   return tracer.startActiveSpan(`tool.${skillName}`, async (span) => {
     span.setAttribute('agent.tool.name', skillName);
+    span.setAttributes(agentLabels);
     if (isCapturePayloadsEnabled()) {
       span.setAttribute(
         'agent.tool.input',
@@ -77,17 +84,18 @@ export async function withSkillExecutionSpan<SkillResult>(
     try {
       const skillResult = await executeSkill(span);
       span.setStatus({ code: SpanStatusCode.OK });
-      skillInvocationCounter.add(1, { tool: skillName, outcome: 'ok' });
+      skillInvocationCounter.add(1, { tool: skillName, outcome: 'ok', ...agentLabels });
       return skillResult;
     } catch (error) {
       span.recordException(error as Error);
       span.setStatus({ code: SpanStatusCode.ERROR, message: String(error) });
-      skillInvocationCounter.add(1, { tool: skillName, outcome: 'error' });
+      skillInvocationCounter.add(1, { tool: skillName, outcome: 'error', ...agentLabels });
       throw error;
     } finally {
       const executionDurationMs = performance.now() - executionStartTimeMs;
       skillExecutionDurationHistogram.record(executionDurationMs, {
         tool: skillName,
+        ...agentLabels,
       });
       span.setAttribute('agent.tool.duration_ms', executionDurationMs);
       span.end();

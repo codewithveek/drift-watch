@@ -82,6 +82,207 @@ describe('GET/POST /agents', () => {
     expect(response.statusCode).toBe(201);
     expect(response.json().agent.id).toBe('finance-agent-prod');
   });
+
+  it('auto-generates a human-readable slug id, not a raw UUID', async () => {
+    const { fastify } = await buildApp();
+    const response = await fastify.inject({
+      method: 'POST',
+      url: '/agents',
+      payload: { name: 'Payment Agent' },
+    });
+    expect(response.json().agent.id).toMatch(/^payment-agent-[0-9a-f]{6}$/);
+  });
+
+  it('re-registering an existing id preserves createdAt and returns 200 (upsert, not reset)', async () => {
+    const { fastify } = await buildApp();
+    const first = await fastify.inject({
+      method: 'POST',
+      url: '/agents',
+      payload: { id: 'finance-agent-prod', name: 'Finance Agent' },
+    });
+    expect(first.statusCode).toBe(201);
+    const originalCreatedAt = first.json().agent.createdAt;
+
+    const second = await fastify.inject({
+      method: 'POST',
+      url: '/agents',
+      payload: { id: 'finance-agent-prod', name: 'Finance Agent Renamed' },
+    });
+    expect(second.statusCode).toBe(200);
+    expect(second.json().agent.name).toBe('Finance Agent Renamed');
+    expect(second.json().agent.createdAt).toBe(originalCreatedAt);
+  });
+
+  it('rejects unknown toolNames at registration with 400', async () => {
+    const { fastify } = await buildApp();
+    const response = await fastify.inject({
+      method: 'POST',
+      url: '/agents',
+      payload: { name: 'Bad Tools Agent', toolNames: ['not_a_real_tool'] },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('rejects a guardrailsSource that self-references at registration with 400', async () => {
+    const { fastify } = await buildApp();
+    const response = await fastify.inject({
+      method: 'POST',
+      url: '/agents',
+      payload: { id: 'self-ref-agent', name: 'Self Ref', guardrailsSource: 'self-ref-agent' },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('rejects a guardrailsSource pointing at a nonexistent agent with 400', async () => {
+    const { fastify } = await buildApp();
+    const response = await fastify.inject({
+      method: 'POST',
+      url: '/agents',
+      payload: { name: 'Dangling Ref', guardrailsSource: 'does-not-exist' },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+});
+
+describe('GET /agents/:agentId (raw definition)', () => {
+  it('returns the unresolved definition, not the merged/resolved view', async () => {
+    const { fastify, store } = await buildApp();
+    await store.upsertAgent({
+      id: 'agent-1',
+      name: 'Agent One',
+      guardrailsSource: 'agent-2',
+      guardrails: { maxTokensPerTask: 42 },
+      toolNames: ['get_weather'],
+      createdAt: 1,
+    });
+    await store.upsertAgent({ id: 'agent-2', name: 'Agent Two', createdAt: 2 });
+
+    const response = await fastify.inject({ method: 'GET', url: '/agents/agent-1' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().agent).toMatchObject({
+      id: 'agent-1',
+      guardrailsSource: 'agent-2',
+      guardrails: { maxTokensPerTask: 42 },
+      toolNames: ['get_weather'],
+    });
+  });
+
+  it('404s for an unknown agent', async () => {
+    const { fastify } = await buildApp();
+    const response = await fastify.inject({ method: 'GET', url: '/agents/unknown' });
+    expect(response.statusCode).toBe(404);
+  });
+});
+
+describe('GET /tools', () => {
+  it('returns the server tool registry', async () => {
+    const { fastify } = await buildApp();
+    const response = await fastify.inject({ method: 'GET', url: '/tools' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().tools).toEqual(['get_weather', 'search_docs']);
+  });
+});
+
+describe('PATCH /agents/:agentId', () => {
+  it('merges guardrails per-field, preserving previously-set fields not touched by this patch', async () => {
+    const { fastify, store } = await buildApp();
+    await store.upsertAgent({
+      id: 'agent-1',
+      name: 'Agent One',
+      guardrails: { maxTokensPerTask: 100, maxCostUsd: 5 },
+      createdAt: 1,
+    });
+
+    const response = await fastify.inject({
+      method: 'PATCH',
+      url: '/agents/agent-1',
+      payload: { guardrails: { maxCostUsd: 10 } },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().agent.guardrails).toEqual({ maxTokensPerTask: 100, maxCostUsd: 10 });
+  });
+
+  it('rejects unknown toolNames with 400', async () => {
+    const { fastify, store } = await buildApp();
+    await store.upsertAgent({ id: 'agent-1', name: 'Agent One', createdAt: 1 });
+
+    const response = await fastify.inject({
+      method: 'PATCH',
+      url: '/agents/agent-1',
+      payload: { toolNames: ['not_a_real_tool'] },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('404s for an unknown agent', async () => {
+    const { fastify } = await buildApp();
+    const response = await fastify.inject({
+      method: 'PATCH',
+      url: '/agents/unknown',
+      payload: { name: 'x' },
+    });
+    expect(response.statusCode).toBe(404);
+  });
+
+  it('takes effect immediately in /state — the live-editability claim', async () => {
+    const { fastify, store } = await buildApp();
+    await store.upsertAgent({ id: 'agent-1', name: 'Agent One', createdAt: 1 });
+
+    const before = await fastify.inject({ method: 'GET', url: '/agents/agent-1/state' });
+    expect(before.json().guardrails.maxTokensPerTask).toBe(0);
+
+    await fastify.inject({
+      method: 'PATCH',
+      url: '/agents/agent-1',
+      payload: { guardrails: { maxTokensPerTask: 42 } },
+    });
+
+    const after = await fastify.inject({ method: 'GET', url: '/agents/agent-1/state' });
+    expect(after.json().guardrails.maxTokensPerTask).toBe(42);
+  });
+});
+
+describe('guardrailsSource resolution at /state', () => {
+  it('uses the referenced agent\'s guardrails as the baseline', async () => {
+    const { fastify, store } = await buildApp();
+    await store.upsertAgent({
+      id: 'source-agent',
+      name: 'Source Agent',
+      guardrails: { maxTokensPerTask: 500, maxCostUsd: 3 },
+      createdAt: 1,
+    });
+    await store.upsertAgent({
+      id: 'derived-agent',
+      name: 'Derived Agent',
+      guardrailsSource: 'source-agent',
+      createdAt: 2,
+    });
+
+    const response = await fastify.inject({ method: 'GET', url: '/agents/derived-agent/state' });
+    expect(response.json().guardrails.maxTokensPerTask).toBe(500);
+    expect(response.json().guardrails.maxCostUsd).toBe(3);
+  });
+
+  it('a local guardrails override wins per-field over the source, while unset fields still inherit', async () => {
+    const { fastify, store } = await buildApp();
+    await store.upsertAgent({
+      id: 'source-agent',
+      name: 'Source Agent',
+      guardrails: { maxTokensPerTask: 500, maxCostUsd: 3 },
+      createdAt: 1,
+    });
+    await store.upsertAgent({
+      id: 'derived-agent',
+      name: 'Derived Agent',
+      guardrailsSource: 'source-agent',
+      guardrails: { maxTokensPerTask: 42 },
+      createdAt: 2,
+    });
+
+    const response = await fastify.inject({ method: 'GET', url: '/agents/derived-agent/state' });
+    expect(response.json().guardrails.maxTokensPerTask).toBe(42); // local override wins
+    expect(response.json().guardrails.maxCostUsd).toBe(3); // inherited from source
+  });
 });
 
 describe('per-agent routes 404 on an unknown agentId', () => {

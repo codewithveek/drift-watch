@@ -26,6 +26,8 @@ detectBehavioralDrift({
   modelClient,
   isDryRun: serverConfig.driftDryRun,
   metricsQuerySource: createMetricsQuerySourceFor(driftWatchConfig.driftDetection, agent),
+  agentId: agent.id,
+  serviceName: agent.serviceName,
 })
   .then((driftReport) => {
     console.log(JSON.stringify(driftReport, null, 2));

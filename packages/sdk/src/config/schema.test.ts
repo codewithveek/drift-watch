@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   DriftWatchConfigSchema,
   loadDriftWatchConfigFromEnv,
+  resolveAgentConfig,
+  type AgentConfig,
 } from './schema.js';
 
 describe('DriftWatchConfigSchema', () => {
@@ -38,6 +40,61 @@ describe('DriftWatchConfigSchema', () => {
     expect(config.telemetry.environment).toBe('production');
     expect(config.agent.maxSteps).toBe(20);
     expect(config.driftDetection.prometheusBaseUrl).toBe('https://prometheus.internal');
+  });
+});
+
+describe('resolveAgentConfig', () => {
+  const globalDefault: AgentConfig = {
+    maxSteps: 8,
+    maxTokensPerTask: 0,
+    maxCostUsd: 0,
+    pricePer1kInput: 0,
+    pricePer1kOutput: 0,
+    onExceed: 'stop',
+  };
+
+  it('returns the global default unchanged when the agent has no override', () => {
+    const resolved = resolveAgentConfig({}, { agent: globalDefault });
+    expect(resolved).toEqual(globalDefault);
+  });
+
+  it('merges a single-field override over the global default', () => {
+    const resolved = resolveAgentConfig(
+      { guardrails: { maxCostUsd: 5 } },
+      { agent: globalDefault },
+    );
+    expect(resolved).toEqual({ ...globalDefault, maxCostUsd: 5 });
+  });
+
+  it('a full override replaces every field', () => {
+    const fullOverride: AgentConfig = {
+      maxSteps: 20,
+      maxTokensPerTask: 1000,
+      maxCostUsd: 10,
+      pricePer1kInput: 0.01,
+      pricePer1kOutput: 0.02,
+      onExceed: 'flag',
+    };
+    const resolved = resolveAgentConfig({ guardrails: fullOverride }, { agent: globalDefault });
+    expect(resolved).toEqual(fullOverride);
+  });
+
+  it('uses a sourceAgent as the baseline when the agent has no guardrails of its own', () => {
+    const resolved = resolveAgentConfig(
+      {},
+      { agent: globalDefault },
+      { guardrails: { maxCostUsd: 7 } },
+    );
+    expect(resolved).toEqual({ ...globalDefault, maxCostUsd: 7 });
+  });
+
+  it("the agent's own guardrails win per-field over a sourceAgent's (inherit-then-override)", () => {
+    const resolved = resolveAgentConfig(
+      { guardrails: { maxCostUsd: 99 } },
+      { agent: globalDefault },
+      { guardrails: { maxCostUsd: 7, maxTokensPerTask: 500 } },
+    );
+    expect(resolved).toEqual({ ...globalDefault, maxTokensPerTask: 500, maxCostUsd: 99 });
   });
 });
 

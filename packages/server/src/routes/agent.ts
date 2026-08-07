@@ -1,8 +1,8 @@
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
-import type { ToolSet } from 'ai';
 import {
   runAgentTask,
   detectBehavioralDrift,
+  resolveAgentConfig,
   type ModelClient,
   type DriftWatchConfig,
   type StateStore,
@@ -10,6 +10,7 @@ import {
 import type { ServerConfig } from '../config/server-config.js';
 import { isRequestAuthorized } from './auth.js';
 import { createMetricsQuerySourceFor } from '../config/metrics-source.js';
+import { buildAgentTools } from '../tools.js';
 
 export interface RegisterRoutesOptions {
   /** Primary/default client — used by the drift judge and when no switch is active. */
@@ -18,17 +19,22 @@ export interface RegisterRoutesOptions {
   modelRegistry: Record<string, ModelClient>;
   /** Shared state; read to see which model Autopilot has the agent switched to. */
   store: StateStore;
-  tools: ToolSet;
   serverConfig: ServerConfig;
   driftWatchConfig: DriftWatchConfig;
+}
+
+/** Thrown when an :agentId route param (or the auto-registered default) isn't registered. */
+class AgentNotFoundError extends Error {
+  constructor(readonly agentId: string) {
+    super(`unknown agent: ${agentId}`);
+  }
 }
 
 export async function registerRoutes(
   fastifyServer: FastifyInstance,
   options: RegisterRoutesOptions,
 ): Promise<void> {
-  const { modelClient, modelRegistry, store, tools, serverConfig, driftWatchConfig } =
-    options;
+  const { modelClient, modelRegistry, store, serverConfig, driftWatchConfig } = options;
 
   /**
    * Pick the client for the next agent run: the model Autopilot has switched
@@ -43,30 +49,46 @@ export async function registerRoutes(
   }
 
   async function runTask(agentId: string, prompt: string) {
+    const agent = await store.getAgentDefinition(agentId);
+    if (!agent) throw new AgentNotFoundError(agentId);
+
+    const sourceAgent = agent.guardrailsSource
+      ? await store.getAgentDefinition(agent.guardrailsSource)
+      : undefined;
+    const resolvedConfig = resolveAgentConfig(agent, driftWatchConfig, sourceAgent);
+
     return runAgentTask({
       prompt,
       modelClient: await resolveAgentModel(agentId),
-      tools,
-      maxSteps: driftWatchConfig.agent.maxSteps,
+      tools: buildAgentTools({
+        toolNames: agent.toolNames,
+        agentId,
+        serviceName: agent.serviceName,
+      }),
+      maxSteps: resolvedConfig.maxSteps,
       guardrails: {
-        maxTokensPerTask: driftWatchConfig.agent.maxTokensPerTask,
-        maxCostUsd: driftWatchConfig.agent.maxCostUsd,
-        pricePer1kInput: driftWatchConfig.agent.pricePer1kInput,
-        pricePer1kOutput: driftWatchConfig.agent.pricePer1kOutput,
-        onExceed: driftWatchConfig.agent.onExceed,
+        maxTokensPerTask: resolvedConfig.maxTokensPerTask,
+        maxCostUsd: resolvedConfig.maxCostUsd,
+        pricePer1kInput: resolvedConfig.pricePer1kInput,
+        pricePer1kOutput: resolvedConfig.pricePer1kOutput,
+        onExceed: resolvedConfig.onExceed,
       },
+      agentId,
+      serviceName: agent.serviceName,
     });
   }
 
   async function runDrift(agentId: string) {
     const agent = await store.getAgentDefinition(agentId);
-    const metricsQuerySource = agent
-      ? createMetricsQuerySourceFor(driftWatchConfig.driftDetection, agent)
-      : undefined;
+    if (!agent) throw new AgentNotFoundError(agentId);
+
+    const metricsQuerySource = createMetricsQuerySourceFor(driftWatchConfig.driftDetection, agent);
     return detectBehavioralDrift({
       modelClient,
       isDryRun: serverConfig.driftDryRun,
       metricsQuerySource,
+      agentId,
+      serviceName: agent.serviceName,
     });
   }
 
@@ -93,6 +115,9 @@ export async function registerRoutes(
       const agentTaskResult = await runTask(agentId, prompt as string);
       return { output: agentTaskResult.responseText, usage: agentTaskResult };
     } catch (error) {
+      if (error instanceof AgentNotFoundError) {
+        return reply.code(404).send({ error: error.message });
+      }
       reply.log.error({ error }, 'agent run failed');
       return reply.code(500).send({ error: (error as Error).message });
     }
@@ -102,6 +127,9 @@ export async function registerRoutes(
     try {
       return await runDrift(agentId);
     } catch (error) {
+      if (error instanceof AgentNotFoundError) {
+        return reply.code(404).send({ error: error.message });
+      }
       log.error({ error }, 'drift detection failed');
       return reply.code(500).send({ error: (error as Error).message });
     }

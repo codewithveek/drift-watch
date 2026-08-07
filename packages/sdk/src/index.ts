@@ -5,6 +5,7 @@ export {
   AgentConfigSchema,
   DriftDetectionConfigSchema,
   loadDriftWatchConfigFromEnv,
+  resolveAgentConfig,
   type DriftWatchConfig,
   type TelemetryConfig,
   type AgentConfig,
@@ -59,14 +60,17 @@ export {
 export {
   summarizeTokenUsage,
   recordUsageOnSpan,
+  recordTokenUsageMetric,
   type TokenUsageSummary,
 } from './telemetry/usage-tracking.js';
+export { buildAgentLabels } from './telemetry/agent-labels.js';
 
 // --- autopilot (Loop 2: drift-triggered remediation, pure decision layer) ---
 export {
   ACTION_TYPES,
   CONTROL_ACTIONS,
   AGENT_ID_PATTERN,
+  generateAgentSlug,
   categorizeAction,
   type ActionType,
   type ActionCategory,

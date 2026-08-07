@@ -3,46 +3,26 @@
  *
  * v7 replaced the auto-emitted `experimental_telemetry` spans with an explicit
  * `Telemetry` integration interface. Without an integration registered,
- * setting `isEnabled: true` on a call is inert — no LLM/step spans, no token
- * counts. This bridge implements the integration once and forwards the
- * events we care about into OTel: one span per LLM step (model, tokens,
- * finish reason) and one counter per token direction, labelled by model,
- * provider, and functionId (a bounded set — 'agent-run', 'drift-judge' —
- * naming which kind of task the tokens were spent on) so aggregate token
- * spend stays queryable without unbounded per-request cardinality.
+ * setting `isEnabled: true` on a call is inert — no LLM/step spans. This
+ * bridge implements the integration once and forwards per-step tracing into
+ * OTel: one `gen_ai.step` span per LLM step (model, tokens, finish reason).
+ *
+ * Token *metrics* (the `agent.tokens` counter) are NOT emitted here — they
+ * live in usage-tracking.ts's `recordTokenUsageMetric`, called directly by
+ * runner.ts/detector.ts once they have the final usage AND an `agentId` in
+ * scope. This class is a shared, stateless singleton registered once
+ * globally by bootstrapTelemetry(); it only ever sees the AI SDK's own
+ * per-step event payload, with no visibility into which agent a given task
+ * belongs to — so it structurally can't label a per-agent counter correctly,
+ * and shouldn't try.
  *
  * Registered automatically by bootstrapTelemetry(); exported for consumers
  * who want to wire telemetry up manually instead.
  */
-import {
-  trace,
-  metrics,
-  SpanStatusCode,
-  type Counter,
-  type Span,
-} from '@opentelemetry/api';
+import { trace, SpanStatusCode, type Span } from '@opentelemetry/api';
 import type { Telemetry } from 'ai';
 
 const tracer = trace.getTracer('driftwatch.ai-sdk');
-
-/**
- * Lazily created — see the long note in instrument.ts. This module is loaded
- * (via the barrel) before `sdk.start()` registers the MeterProvider, so a
- * counter created at module load would bind to the NoopMeter and silently drop
- * every token count. Creating it on first use (inside onLanguageModelCallEnd,
- * which fires during a request) binds it to the real provider instead.
- */
-let cachedTokenUsageCounter: Counter | undefined;
-function getTokenUsageCounter(): Counter {
-  if (!cachedTokenUsageCounter) {
-    cachedTokenUsageCounter = metrics
-      .getMeter('driftwatch.ai-sdk')
-      .createCounter('agent.tokens', {
-        description: 'Token usage per model/provider/task, split by input/output',
-      });
-  }
-  return cachedTokenUsageCounter;
-}
 
 interface ModelStepEvent {
   functionId?: string;
@@ -79,12 +59,6 @@ export class AiSdkOtelIntegration implements Telemetry {
     this.activeStepSpans.set(stepStartEvent, stepSpan);
   };
 
-  onLanguageModelCallEnd = (
-    languageModelCallEndEvent: ModelStepEvent,
-  ): void => {
-    recordTokenUsage(languageModelCallEndEvent, getTokenUsageCounter());
-  };
-
   onStepEnd = (stepEndEvent: ModelStepEvent): void => {
     const stepSpan = this.activeStepSpans.get(stepEndEvent);
     if (!stepSpan) return;
@@ -93,29 +67,6 @@ export class AiSdkOtelIntegration implements Telemetry {
     stepSpan.end();
     this.activeStepSpans.delete(stepEndEvent);
   };
-}
-
-function recordTokenUsage(
-  modelStepEvent: ModelStepEvent,
-  counter: Counter,
-): void {
-  const modelIdentifier = modelStepEvent.model?.modelId ?? 'unknown';
-  const providerName = modelStepEvent.model?.provider ?? 'unknown';
-  const taskFunctionId = modelStepEvent.functionId ?? 'unknown';
-  const inputTokenCount = modelStepEvent.usage?.inputTokens ?? 0;
-  const outputTokenCount = modelStepEvent.usage?.outputTokens ?? 0;
-
-  const labels = {
-    model: modelIdentifier,
-    provider: providerName,
-    function_id: taskFunctionId,
-  };
-  if (inputTokenCount > 0) {
-    counter.add(inputTokenCount, { ...labels, type: 'input' });
-  }
-  if (outputTokenCount > 0) {
-    counter.add(outputTokenCount, { ...labels, type: 'output' });
-  }
 }
 
 function applyModelStepAttributes(

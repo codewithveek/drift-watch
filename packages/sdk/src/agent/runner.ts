@@ -27,10 +27,12 @@ import type { ModelClient, ModelClientDescriptor } from '../model-client.js';
 import { describeModelClient } from '../model-client.js';
 import {
   recordUsageOnSpan,
+  recordTokenUsageMetric,
   summarizeTokenUsage,
   type TokenUsageSummary,
 } from '../telemetry/usage-tracking.js';
 import { isCapturePayloadsEnabled } from '../telemetry/capture-config.js';
+import { buildAgentLabels } from '../telemetry/agent-labels.js';
 import {
   buildTokenBudgetStopConditions,
   evaluateGuardrailBreach,
@@ -52,6 +54,14 @@ export interface RunAgentTaskOptions {
    * AgentConfig (see ../config/schema.ts).
    */
   guardrails?: AgentGuardrails;
+  /**
+   * Attributes the agent.run span and the agent.tokens metric to this agent
+   * — a fleet deployment's per-agent isolation depends on this being set.
+   * Omit for the pre-fleet single-agent case.
+   */
+  agentId?: string;
+  /** The target agent's OTel service.name, if known — see recordTokenUsageMetric. */
+  serviceName?: string;
 }
 
 export interface AgentTaskResult {
@@ -77,12 +87,15 @@ export async function runAgentTask(
     tools,
     maxSteps = DEFAULT_MAXIMUM_AGENT_STEPS,
     guardrails,
+    agentId,
+    serviceName,
   } = options;
   const taskId = randomUUID();
   const modelClientDescriptor = describeModelClient(modelClient);
 
   return tracer.startActiveSpan('agent.run', async (rootSpan) => {
     rootSpan.setAttribute('agent.task_id', taskId);
+    rootSpan.setAttributes(buildAgentLabels(agentId, serviceName));
     if (isCapturePayloadsEnabled()) {
       rootSpan.setAttribute('agent.prompt', prompt.slice(0, 512));
     }
@@ -126,6 +139,14 @@ export async function runAgentTask(
       });
 
       recordAgentTaskOnSpan({ span: rootSpan, agentTaskResult });
+      recordTokenUsageMetric({
+        usage: agentTaskResult.tokenUsage,
+        providerName: agentTaskResult.providerName,
+        modelIdentifier: agentTaskResult.modelIdentifier,
+        functionId: 'agent-run',
+        agentId,
+        serviceName,
+      });
       rootSpan.setStatus({ code: SpanStatusCode.OK });
       return agentTaskResult;
     } catch (error) {

@@ -14,7 +14,6 @@ import { registerConsoleRoutes } from './routes/console.js';
 import { registerIntegrationRoutes } from './routes/integrations.js';
 import { loadServerConfigFromEnv } from './config/server-config.js';
 import { modelClient, modelRegistry } from './config/model-client.js';
-import { tools } from './tools.js';
 import { createAutopilot } from './autopilot/index.js';
 
 assertModelClientIsConfigured(modelClient);
@@ -47,7 +46,6 @@ await registerRoutes(fastifyServer, {
   modelClient,
   modelRegistry,
   store: autopilot.store,
-  tools,
   serverConfig,
   driftWatchConfig,
 });

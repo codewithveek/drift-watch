@@ -19,6 +19,7 @@ import type {
   StateStore,
 } from './types.js';
 import { randomUUID } from 'node:crypto';
+import { buildAgentLabels } from '../telemetry/agent-labels.js';
 
 const tracer = trace.getTracer('driftwatch');
 
@@ -55,9 +56,12 @@ function getModelSwitchCounter(): Counter {
  * attributes (its own service.name), not the agent's. That would silently
  * break per-agent Prometheus filtering (PrometheusMetricsSource's
  * extraLabelMatchers) for every agent except one that happens to share the
- * server's service.name. Fixed by attaching `agent.id`/`service_name` as
- * explicit POINT attributes sourced from the agent's own AgentDefinition,
- * rather than relying on process-wide resource identity.
+ * server's service.name. Fixed by attaching agent-identity labels via
+ * buildAgentLabels (agent_id primary, service_name secondary) to BOTH the
+ * span and the counter — an earlier version of this function only put
+ * `agent.id` on the span, leaving the counter filterable by service_name
+ * only, which silently breaks once query-side filtering switches to
+ * agent_id as primary (a co-located agent's switches would never match).
  */
 function recordModelSwitchMarker(
   agentId: string,
@@ -66,18 +70,19 @@ function recordModelSwitchMarker(
   reason: string,
   serviceName: string | undefined,
 ): void {
-  const attributes = {
-    'agent.model.from': from ?? 'default',
-    'agent.model.to': to,
-    'agent.control.reason': reason,
-    'agent.id': agentId,
-    ...(serviceName ? { service_name: serviceName } : {}),
-  };
-  tracer.startSpan('agent.model.switch', { attributes }).end();
+  const labels = buildAgentLabels(agentId, serviceName);
+  tracer.startSpan('agent.model.switch', {
+    attributes: {
+      'agent.model.from': from ?? 'default',
+      'agent.model.to': to,
+      'agent.control.reason': reason,
+      ...labels,
+    },
+  }).end();
   getModelSwitchCounter().add(1, {
     from_model: from ?? 'default',
     to_model: to,
-    ...(serviceName ? { service_name: serviceName } : {}),
+    ...labels,
   });
 }
 

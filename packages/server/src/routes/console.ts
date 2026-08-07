@@ -5,21 +5,31 @@
  *
  * Everything here reads/writes the SHARED StateStore, so the console, Slack,
  * and Telegram always see the same truth. Every route except /agents itself
- * (list + register) is scoped to one agent via an :agentId path param, and
- * 404s early if that agent isn't registered — see requireAgent below.
+ * (list + register) and /tools is scoped to one agent via an :agentId path
+ * param, and 404s early if that agent isn't registered — see requireAgent
+ * below. Guardrails/tools are resolved fresh from the AgentDefinition on
+ * every request (see resolveAgentConfig/buildAgentTools in routes/agent.ts),
+ * so a PATCH here takes effect on the very next /run call — no restart, no
+ * polling, no cache to invalidate.
  */
-import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type {
+  AgentConfig,
   AgentDefinition,
   DriftWatchConfig,
   StateStore,
   ApprovalService,
   AutopilotScheduler,
 } from '@driftwatch/sdk';
-import { AGENT_ID_PATTERN, executeControlAction } from '@driftwatch/sdk';
+import {
+  AGENT_ID_PATTERN,
+  executeControlAction,
+  generateAgentSlug,
+  resolveAgentConfig,
+} from '@driftwatch/sdk';
 import type { ServerConfig } from '../config/server-config.js';
 import { isRequestAuthorized } from './auth.js';
+import { allToolNames } from '../tools.js';
 
 const HISTORY_LIMIT = 100;
 
@@ -46,6 +56,43 @@ async function requireAgent(
   return agent;
 }
 
+/** Rejects (and 400s) any toolNames not present in the server's tool registry. */
+function validateToolNames(toolNames: string[] | undefined, reply: FastifyReply): boolean {
+  if (!toolNames) return true;
+  const unknown = toolNames.filter((name) => !allToolNames.includes(name));
+  if (unknown.length > 0) {
+    reply.code(400).send({ error: `unknown tool names: ${unknown.join(', ')}` });
+    return false;
+  }
+  return true;
+}
+
+/** guardrailsSource must reference a different, existing agent — self-refs and dangling refs both 400. */
+async function validateGuardrailsSource(
+  store: StateStore,
+  guardrailsSource: string,
+  selfId: string,
+  reply: FastifyReply,
+): Promise<boolean> {
+  const source = guardrailsSource !== selfId ? await store.getAgentDefinition(guardrailsSource) : undefined;
+  if (!source) {
+    reply.code(400).send({ error: 'guardrailsSource must reference a different, existing agent' });
+    return false;
+  }
+  return true;
+}
+
+interface AgentWriteBody {
+  id?: string;
+  name?: string;
+  owner?: string;
+  serviceName?: string;
+  guardrails?: Partial<AgentConfig>;
+  guardrailsSource?: string;
+  toolNames?: string[];
+  driftDetectionEnabled?: boolean;
+}
+
 export async function registerConsoleRoutes(
   fastifyServer: FastifyInstance,
   options: RegisterConsoleRoutesOptions,
@@ -60,23 +107,91 @@ export async function registerConsoleRoutes(
     return { agents: await store.listAgents() };
   });
 
-  fastifyServer.post<{
-    Body: { id?: string; name?: string; owner?: string; serviceName?: string };
-  }>('/agents', async (request, reply) => {
+  fastifyServer.post<{ Body: AgentWriteBody }>('/agents', async (request, reply) => {
     if (!isRequestAuthorized(request, reply, authToken)) return;
 
-    const { name, owner, serviceName } = request.body ?? {};
+    const body = request.body ?? {};
+    const { name, owner, serviceName, guardrails, guardrailsSource, toolNames, driftDetectionEnabled } =
+      body;
     if (!name) {
       return reply.code(400).send({ error: 'name (string) required' });
     }
-    const id = request.body?.id || randomUUID();
+    const id = body.id || generateAgentSlug(name);
     if (!AGENT_ID_PATTERN.test(id)) {
       return reply.code(400).send({ error: 'id must match ^[a-zA-Z0-9_-]+$' });
     }
+    if (!validateToolNames(toolNames, reply)) return;
+    if (guardrailsSource && !(await validateGuardrailsSource(store, guardrailsSource, id, reply))) return;
 
-    const definition: AgentDefinition = { id, name, owner, serviceName, createdAt: Date.now() };
+    // Upsert semantics: re-registering an existing id updates it (preserving
+    // createdAt) rather than resetting its history — 200 vs 201 reflects that.
+    const existing = await store.getAgentDefinition(id);
+    const definition: AgentDefinition = {
+      id,
+      name,
+      owner,
+      serviceName,
+      guardrails,
+      guardrailsSource,
+      toolNames,
+      driftDetectionEnabled,
+      createdAt: existing?.createdAt ?? Date.now(),
+    };
     await store.upsertAgent(definition);
-    return reply.code(201).send({ agent: definition });
+    return reply.code(existing ? 200 : 201).send({ agent: definition });
+  });
+
+  fastifyServer.get<{ Params: { agentId: string } }>('/agents/:agentId', async (request, reply) => {
+    if (!isRequestAuthorized(request, reply, authToken)) return;
+    const agent = await requireAgent(store, request.params.agentId, reply);
+    if (!agent) return;
+    // Raw, unresolved definition — for populating an edit form. /state below
+    // returns the *resolved* (merged) view for display, which you don't want
+    // to PATCH back (it would bake an inherited guardrailsSource in as a
+    // hard override).
+    return { agent };
+  });
+
+  fastifyServer.patch<{ Params: { agentId: string }; Body: AgentWriteBody }>(
+    '/agents/:agentId',
+    async (request, reply) => {
+      if (!isRequestAuthorized(request, reply, authToken)) return;
+      const agent = await requireAgent(store, request.params.agentId, reply);
+      if (!agent) return;
+
+      const body = request.body ?? {};
+      if (!validateToolNames(body.toolNames, reply)) return;
+      if (
+        body.guardrailsSource &&
+        !(await validateGuardrailsSource(store, body.guardrailsSource, agent.id, reply))
+      ) {
+        return;
+      }
+
+      const updated: AgentDefinition = {
+        ...agent,
+        ...(body.name !== undefined ? { name: body.name } : {}),
+        ...(body.owner !== undefined ? { owner: body.owner } : {}),
+        ...(body.serviceName !== undefined ? { serviceName: body.serviceName } : {}),
+        // Nested partial merge: patching just one guardrail field doesn't
+        // clobber previously-set ones.
+        ...(body.guardrails !== undefined
+          ? { guardrails: { ...agent.guardrails, ...body.guardrails } }
+          : {}),
+        ...(body.guardrailsSource !== undefined ? { guardrailsSource: body.guardrailsSource } : {}),
+        ...(body.toolNames !== undefined ? { toolNames: body.toolNames } : {}),
+        ...(body.driftDetectionEnabled !== undefined
+          ? { driftDetectionEnabled: body.driftDetectionEnabled }
+          : {}),
+      };
+      await store.upsertAgent(updated);
+      return { agent: updated };
+    },
+  );
+
+  fastifyServer.get('/tools', async (request, reply) => {
+    if (!isRequestAuthorized(request, reply, authToken)) return;
+    return { tools: allToolNames };
   });
 
   // --- per-agent state/history/approvals/log --------------------------------
@@ -87,6 +202,9 @@ export async function registerConsoleRoutes(
       if (!isRequestAuthorized(request, reply, authToken)) return;
       const agent = await requireAgent(store, request.params.agentId, reply);
       if (!agent) return;
+      const sourceAgent = agent.guardrailsSource
+        ? await store.getAgentDefinition(agent.guardrailsSource)
+        : undefined;
       return {
         agent: await store.getAgentState(agent.id),
         autopilot: {
@@ -94,11 +212,8 @@ export async function registerConsoleRoutes(
           mode: serverConfig.autopilotMode,
           scanIntervalMs: serverConfig.scanIntervalMs,
         },
-        guardrails: {
-          maxTokensPerTask: driftWatchConfig.agent.maxTokensPerTask,
-          maxCostUsd: driftWatchConfig.agent.maxCostUsd,
-          onExceed: driftWatchConfig.agent.onExceed,
-        },
+        guardrails: resolveAgentConfig(agent, driftWatchConfig, sourceAgent),
+        toolNames: agent.toolNames ?? allToolNames,
       };
     },
   );
@@ -198,10 +313,13 @@ export async function registerConsoleRoutes(
       if (!agent) return;
       try {
         const result = await scheduler.runCycleForAgent(agent.id, 'manual');
-        if (result.skipped) {
+        if (result.skipped === 'disabled') {
+          return reply.code(503).send({ error: 'drift detection disabled for this agent' });
+        }
+        if (result.skipped === 'no-metrics-source') {
           return reply
             .code(503)
-            .send({ error: 'agent has no serviceName registered; drift detection skipped' });
+            .send({ error: 'agent has no metrics source configured; drift detection skipped' });
         }
         return { verdict: result.report?.verdict, intents: result.intents };
       } catch (error) {

@@ -15,7 +15,9 @@
  *     package, since they track those providers' APIs independently of this
  *     package's release cadence.
  */
+import { randomBytes } from 'node:crypto';
 import type { DriftVerdict } from '../drift/detector.js';
+import type { AgentConfig } from '../config/schema.js';
 
 /** Every remediation action Autopilot knows how to intend. */
 export const ACTION_TYPES = [
@@ -96,25 +98,46 @@ export interface AgentRuntimeState {
 
 /**
  * Registry entry for one monitored agent in the fleet — distinct from
- * `AgentRuntimeState` (its mutable runtime status). A real fleet is normally
- * many separately-deployed agent services, each with its own OTel
- * `service.name`; this record maps a stable `id` (used throughout the
- * control plane: approvals, drift history, action log, routes) to that
- * agent's telemetry identity for querying.
+ * `AgentRuntimeState` (its mutable runtime status). One deployment can host
+ * many agents; `id` (a low-cardinality metric label — see `agent.id`/
+ * `agent_id` on spans and counters throughout the SDK) is what actually
+ * isolates one agent's telemetry/state/config from another's, not process
+ * identity. This record is the single source of truth for everything that
+ * varies per agent: telemetry association, guardrails, and tools.
  */
 export interface AgentDefinition {
   id: string;
   name: string;
   owner?: string;
   /**
-   * OTel service.name for this agent's telemetry — used to build a
-   * per-agent PromQL label matcher (see PrometheusMetricsSource's
-   * `extraLabelMatchers`). Omit to register an agent for approval/control
-   * tracking only; the Autopilot scheduler skips drift detection for any
-   * agent with no serviceName.
+   * OTel service.name this agent's telemetry is nominally associated with —
+   * an optional secondary Prometheus label matcher (see
+   * PrometheusMetricsSource's `extraLabelMatchers`), not the primary one.
+   * `agent_id` (this record's `id`) is the primary per-agent metric label,
+   * since co-located agents sharing one process share one `service.name`.
    */
   serviceName?: string;
   createdAt: number;
+  /**
+   * Per-agent guardrail overrides, merged over DriftWatchConfig.agent
+   * per-field. If `guardrailsSource` is also set, this merges OVER that
+   * agent's own guardrails — inherit a shared baseline, then tweak specific
+   * fields locally.
+   */
+  guardrails?: Partial<AgentConfig>;
+  /**
+   * Reuse another agent's guardrails as this agent's baseline (e.g. a
+   * payment agent reusing a customer-service agent's caps) — a single-hop
+   * reference, not a chain: resolution uses the referenced agent's own
+   * `guardrails` field directly, ignoring whether THAT agent itself has a
+   * `guardrailsSource` set. Must reference an existing, different agent id
+   * — validated at registration/edit time (see the server's console routes).
+   */
+  guardrailsSource?: string;
+  /** Tool names this agent may call. Omit = every registered tool (today's behavior). */
+  toolNames?: string[];
+  /** Default true. Set false for an approval/control-only agent, never drift-scanned. */
+  driftDetectionEnabled?: boolean;
 }
 
 /**
@@ -122,9 +145,29 @@ export interface AgentDefinition {
  * must match this before being trusted as a Redis/composite-key segment —
  * an unvalidated id containing `:` (RedisStateStore) or the cooldown-key
  * separator could collide with another agent's keys. Ids generated internally
- * via randomUUID() are safe by construction and don't need this check.
+ * via randomUUID() (or generateAgentSlug below) are safe by construction and
+ * don't need this check.
  */
 export const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+/**
+ * Human-readable agent id: a slug of `name` plus a short random suffix to
+ * prevent collisions (e.g. "Payment Agent" -> "payment-agent-9e930e"). Used
+ * as the default when a caller doesn't supply a custom id at registration —
+ * this id is also the primary telemetry label (`agent_id`), so a readable
+ * value is worth more here than in a typical opaque-id case. Always matches
+ * AGENT_ID_PATTERN.
+ */
+export function generateAgentSlug(name: string): string {
+  const base = name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+  const suffix = randomBytes(3).toString('hex');
+  return base ? `${base}-${suffix}` : suffix;
+}
 
 export interface DriftHistoryEntry {
   id: string;

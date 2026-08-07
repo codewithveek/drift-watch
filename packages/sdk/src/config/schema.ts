@@ -64,6 +64,28 @@ export const AgentConfigSchema = z.object({
 });
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
+/**
+ * Merges an agent's guardrail overrides over the deployment-wide default,
+ * with an optional shared baseline in between: global default -> sourceAgent's
+ * own guardrails (if the caller resolved a `guardrailsSource` reference) ->
+ * this agent's own guardrails. Pure — no I/O, no store access. Resolving a
+ * `guardrailsSource` id into `sourceAgent` is the caller's job (it requires a
+ * store lookup); this function only merges already-resolved objects. Takes a
+ * minimal structural type rather than importing `AgentDefinition` to avoid a
+ * `config/` -> `autopilot/` dependency.
+ */
+export function resolveAgentConfig(
+  agent: { guardrails?: Partial<AgentConfig> },
+  driftWatchConfig: { agent: AgentConfig },
+  sourceAgent?: { guardrails?: Partial<AgentConfig> },
+): AgentConfig {
+  return {
+    ...driftWatchConfig.agent,
+    ...sourceAgent?.guardrails,
+    ...agent.guardrails,
+  };
+}
+
 export const DriftDetectionConfigSchema = z.object({
   /**
    * Base URL of the Prometheus-compatible query API used by the built-in

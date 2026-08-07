@@ -17,9 +17,9 @@
 import { generateText, type LanguageModelUsage, type ModelMessage } from 'ai';
 import { z } from 'zod';
 import type { ModelClient } from '../model-client.js';
-import { describeModelClient } from '../model-client.js';
+import { describeModelClient, type ModelClientDescriptor } from '../model-client.js';
 import type { MetricsQuerySource, WindowStats } from './metrics-source.js';
-import type { TokenUsageSummary } from '../telemetry/usage-tracking.js';
+import { recordTokenUsageMetric, type TokenUsageSummary } from '../telemetry/usage-tracking.js';
 
 export type { WindowStats, MetricsQuerySource } from './metrics-source.js';
 
@@ -59,12 +59,16 @@ export interface DetectBehavioralDriftOptions {
   isDryRun?: boolean;
   /** Required unless isDryRun is true — see ./metrics-source.ts and ./prometheus-source.ts. */
   metricsQuerySource?: MetricsQuerySource;
+  /** Attributes the judge's agent.tokens spend to the agent being judged. */
+  agentId?: string;
+  /** The judged agent's OTel service.name, if known — see recordTokenUsageMetric. */
+  serviceName?: string;
 }
 
 export async function detectBehavioralDrift(
   options: DetectBehavioralDriftOptions,
 ): Promise<DriftReport> {
-  const { modelClient, isDryRun = false, metricsQuerySource } = options;
+  const { modelClient, isDryRun = false, metricsQuerySource, agentId, serviceName } = options;
 
   if (!isDryRun && !metricsQuerySource) {
     throw new Error(
@@ -88,7 +92,10 @@ export async function detectBehavioralDrift(
     baselineWindowStats,
     currentWindowStats,
     modelClient,
+    modelClientDescriptor,
     modelSwitchNote,
+    agentId,
+    serviceName,
   });
 
   return {
@@ -204,14 +211,24 @@ async function judgeDriftVerdict(options: {
   baselineWindowStats: WindowStats;
   currentWindowStats: WindowStats;
   modelClient: ModelClient;
+  modelClientDescriptor: ModelClientDescriptor;
   modelSwitchNote?: string;
+  agentId?: string;
+  serviceName?: string;
 }): Promise<{
   verdict: DriftVerdict;
   judgeTokenUsage: TokenUsageSummary;
   judgeAttempts: number;
 }> {
-  const { baselineWindowStats, currentWindowStats, modelClient, modelSwitchNote } =
-    options;
+  const {
+    baselineWindowStats,
+    currentWindowStats,
+    modelClient,
+    modelClientDescriptor,
+    modelSwitchNote,
+    agentId,
+    serviceName,
+  } = options;
 
   const messages: ModelMessage[] = [
     {
@@ -247,6 +264,14 @@ async function judgeDriftVerdict(options: {
 
     const parsed = parseDriftVerdict(text);
     if (parsed.ok) {
+      recordTokenUsageMetric({
+        usage: usageTotals,
+        providerName: modelClientDescriptor.providerName,
+        modelIdentifier: modelClientDescriptor.modelIdentifier,
+        functionId: DRIFT_JUDGE_FUNCTION_ID,
+        agentId,
+        serviceName,
+      });
       return {
         verdict: parsed.verdict,
         judgeTokenUsage: { ...usageTotals },

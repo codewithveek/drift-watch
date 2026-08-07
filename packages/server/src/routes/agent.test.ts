@@ -93,7 +93,6 @@ async function buildTestServer(
     modelClient: 'fake-model' as unknown as ModelClient,
     modelRegistry,
     store,
-    tools: {},
     serverConfig,
     driftWatchConfig: DriftWatchConfigSchema.parse({}),
   });
@@ -382,5 +381,63 @@ describe('agent-scoped /run and /drift', () => {
       headers: { authorization: 'Bearer secret' },
     });
     expect(bare.statusCode).toBe(200);
+  });
+
+  it('/agents/:agentId/run 404s for an unregistered agent (does not silently run with no scoping)', async () => {
+    const server = await buildTestServer({ authToken: 'secret' });
+    const response = await server.inject({
+      method: 'POST',
+      url: '/agents/never-registered/run',
+      headers: { authorization: 'Bearer secret' },
+      payload: { prompt: 'hi' },
+    });
+    expect(response.statusCode).toBe(404);
+    expect(runAgentTaskMock).not.toHaveBeenCalled();
+  });
+
+  it('/agents/:agentId/drift 404s for an unregistered agent', async () => {
+    const server = await buildTestServer({ authToken: 'secret' });
+    const response = await server.inject({
+      method: 'GET',
+      url: '/agents/never-registered/drift',
+      headers: { authorization: 'Bearer secret' },
+    });
+    expect(response.statusCode).toBe(404);
+    expect(detectBehavioralDriftMock).not.toHaveBeenCalled();
+  });
+
+  it('resolves each agent\'s own tools/guardrails/agentId, not the global default, per request', async () => {
+    const server = await buildTestServer({ authToken: 'secret' });
+    await currentStore!.upsertAgent({
+      id: 'restricted-agent',
+      name: 'Restricted Agent',
+      toolNames: ['get_weather'],
+      guardrails: { maxTokensPerTask: 42 },
+      createdAt: Date.now(),
+    });
+
+    await server.inject({
+      method: 'POST',
+      url: '/agents/restricted-agent/run',
+      headers: { authorization: 'Bearer secret' },
+      payload: { prompt: 'hi' },
+    });
+
+    const call = runAgentTaskMock.mock.calls.at(-1)![0];
+    expect(call.agentId).toBe('restricted-agent');
+    expect(Object.keys(call.tools)).toEqual(['get_weather']);
+    expect(call.guardrails.maxTokensPerTask).toBe(42);
+
+    // The default agent (no overrides) still gets the global defaults and every tool.
+    await server.inject({
+      method: 'POST',
+      url: '/run',
+      headers: { authorization: 'Bearer secret' },
+      payload: { prompt: 'hi' },
+    });
+    const defaultCall = runAgentTaskMock.mock.calls.at(-1)![0];
+    expect(defaultCall.agentId).toBe('default');
+    expect(Object.keys(defaultCall.tools).sort()).toEqual(['get_weather', 'search_docs']);
+    expect(defaultCall.guardrails.maxTokensPerTask).toBe(0);
   });
 });
