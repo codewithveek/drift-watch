@@ -15,7 +15,7 @@
  * raw body/headers and calling those functions.
  */
 import type { FastifyInstance } from 'fastify';
-import type { ApprovalService } from '@driftwatch/sdk';
+import type { ApprovalService, ApprovalDecision, StateStore } from '@driftwatch/sdk';
 import {
   verifySlackSignature,
   parseSlackInteraction,
@@ -29,14 +29,47 @@ export { verifySlackSignature } from '@driftwatch/autopilot';
 
 export interface RegisterIntegrationRoutesOptions {
   approvalService: ApprovalService;
+  /**
+   * Needed for the tool-call-approval fallback resolution path below — a
+   * button tap's id could belong to either a control approval (resolved via
+   * approvalService) or a tool-call approval (resolved directly against the
+   * store, no executeControlAction involved). See resolveEitherApproval.
+   */
+  store: StateStore;
   serverConfig: ServerConfig;
+}
+
+/**
+ * Tries the control-approval resolution path first (approvalService.resolve,
+ * which also executes the approved control action); if that id isn't a
+ * control approval (returns undefined), falls back to resolving it as a
+ * tool-call approval directly against the store. There's no way to know
+ * which kind an incoming button-tap id belongs to without checking — both
+ * approval kinds render the exact same Approve/Reject buttons and round-trip
+ * the same opaque id (see packages/autopilot/src/notifiers/*.ts).
+ */
+async function resolveEitherApproval(
+  approvalService: ApprovalService,
+  store: StateStore,
+  id: string,
+  decision: ApprovalDecision,
+  actor: string,
+  channel: string,
+): Promise<{ kind: 'control'; label: string } | { kind: 'tool_call'; label: string } | undefined> {
+  const controlResolved = await approvalService.resolve(id, decision, actor, channel);
+  if (controlResolved) return { kind: 'control', label: controlResolved.action };
+
+  const toolCallResolved = await store.resolveToolCallApproval(id, decision, actor, channel);
+  if (toolCallResolved) return { kind: 'tool_call', label: toolCallResolved.tool };
+
+  return undefined;
 }
 
 export async function registerIntegrationRoutes(
   fastifyServer: FastifyInstance,
   options: RegisterIntegrationRoutesOptions,
 ): Promise<void> {
-  const { approvalService, serverConfig } = options;
+  const { approvalService, store, serverConfig } = options;
 
   // Slack sends interactions as application/x-www-form-urlencoded. We need the
   // RAW body to verify the signature, so keep it as a string and parse by hand.
@@ -72,11 +105,11 @@ export async function registerIntegrationRoutes(
     }
 
     const { approvalId, decision, actor } = interaction;
-    const resolved = await approvalService.resolve(approvalId, decision, actor, 'slack');
+    const resolved = await resolveEitherApproval(approvalService, store, approvalId, decision, actor, 'slack');
     const verb = decision === 'approved' ? 'Approved' : 'Rejected';
     return reply.code(200).send({
       text: resolved
-        ? `${verb} — ${resolved.action} (by ${actor})`
+        ? `${verb} — ${resolved.label} (by ${actor})`
         : 'Already resolved.',
     });
   });
@@ -100,7 +133,9 @@ export async function registerIntegrationRoutes(
     }
 
     const { approvalId, decision, actor, callbackQueryId } = callback;
-    const resolved = await approvalService.resolve(
+    const resolved = await resolveEitherApproval(
+      approvalService,
+      store,
       approvalId,
       decision,
       actor,
@@ -110,7 +145,7 @@ export async function registerIntegrationRoutes(
     await answerTelegramCallback(
       serverConfig.telegramBotToken,
       callbackQueryId,
-      resolved ? `${verb} ${resolved.action}` : 'Already resolved',
+      resolved ? `${verb} ${resolved.label}` : 'Already resolved',
     ).catch((error) => request.log.error({ error }, 'answerCallbackQuery failed'));
 
     return reply.code(200).send({ ok: true });

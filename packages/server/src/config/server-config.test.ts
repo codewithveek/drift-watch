@@ -24,6 +24,8 @@ describe('ServerConfigSchema', () => {
       cooldownMs: 300_000,
       approvalTimeoutMs: 600_000,
       approvalTimeoutDecision: 'rejected',
+      toolCallApprovalTimeoutMs: 120_000,
+      toolCallApprovalTimeoutDecision: 'rejected',
       switchModelTo: '',
       slackWebhookUrl: '',
       slackSigningSecret: '',

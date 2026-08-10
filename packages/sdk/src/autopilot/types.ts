@@ -18,6 +18,7 @@
 import { randomBytes } from 'node:crypto';
 import type { DriftVerdict } from '../drift/detector.js';
 import type { AgentConfig } from '../config/schema.js';
+import type { ToolCallPolicyRule } from './tool-call-policy.js';
 
 /** Every remediation action Autopilot knows how to intend. */
 export const ACTION_TYPES = [
@@ -83,6 +84,38 @@ export interface Approval {
   channel?: string;
 }
 
+/**
+ * A single in-flight tool call awaiting a human decision (Loop 3) — NOT a
+ * reuse of `Approval`, which is shaped entirely around `ActionType`/
+ * `DriftSeverity` for agent-lifecycle control actions. Shoehorning a tool
+ * name/call-args into `reasons`/`recommendedAction` strings would be lossy,
+ * and would mix a conceptually different kind of event into the
+ * control-approval audit trail. See tool-call-gate.ts for how this is
+ * created/resolved.
+ */
+export interface ToolCallApproval {
+  id: string;
+  agentId: string;
+  tool: string;
+  /** The policy rule's `field` (dot-path), if the matched rule was field-scoped. */
+  fieldPath?: string;
+  /** The matched rule's `reason`, if set — shown in the approval notification. */
+  matchedReason?: string;
+  /**
+   * The tool's raw input, ONLY populated when payload capture is enabled
+   * (see isCapturePayloadsEnabled in telemetry/capture-config.ts) — never
+   * leak a sensitive field's actual value into a Slack/Telegram message by
+   * default, that would defeat the point of gating it in the first place.
+   */
+  inputSummary?: Record<string, unknown>;
+  status: ApprovalStatus;
+  createdAt: number;
+  expiresAt: number;
+  resolvedAt?: number;
+  resolvedBy?: string;
+  channel?: string;
+}
+
 export type AgentStatus = 'running' | 'paused' | 'throttled';
 
 /** The monitored agent's current runtime posture, shared across processes. */
@@ -138,6 +171,22 @@ export interface AgentDefinition {
   toolNames?: string[];
   /** Default true. Set false for an approval/control-only agent, never drift-scanned. */
   driftDetectionEnabled?: boolean;
+  /**
+   * Pre-execution, per-tool-call gate rules (Loop 3 — see tool-call-policy.ts
+   * and tool-call-gate.ts). If `toolPoliciesSource` is also set, this list is
+   * evaluated ALONGSIDE that agent's own `toolPolicies` (union, not override
+   * — a rule list composes by "which rules apply," not by per-field replace
+   * the way `guardrails` does).
+   */
+  toolPolicies?: ToolCallPolicyRule[];
+  /**
+   * Reuse another agent's tool-call policies as an additional, shared
+   * baseline (e.g. a fleet-wide "large refunds need approval" rule set) —
+   * independent of `guardrailsSource`, since spend caps and tool-call risk
+   * gating are different axes a deployer may want to compose differently.
+   * Single-hop reference, same validation as `guardrailsSource`.
+   */
+  toolPoliciesSource?: string;
 }
 
 /**
@@ -167,6 +216,21 @@ export function generateAgentSlug(name: string): string {
     .slice(0, 40);
   const suffix = randomBytes(3).toString('hex');
   return base ? `${base}-${suffix}` : suffix;
+}
+
+/**
+ * Resolves the effective tool-call policy set for one agent: the union of
+ * its own `toolPolicies` and (if `toolPoliciesSource` is set) the referenced
+ * agent's `toolPolicies` — NOT a per-field override like `resolveAgentConfig`
+ * does for guardrails, since a rule LIST composes by "which rules apply,"
+ * not by replacing one flat record's fields. No dedup: overlapping/duplicate
+ * rules are harmless under evaluateToolCallPolicy's strictest-wins combining.
+ */
+export function resolveToolCallPolicies(
+  agent: AgentDefinition,
+  sourceAgent?: AgentDefinition,
+): ToolCallPolicyRule[] {
+  return [...(sourceAgent?.toolPolicies ?? []), ...(agent.toolPolicies ?? [])];
 }
 
 export interface DriftHistoryEntry {
@@ -246,6 +310,20 @@ export interface StateStore {
     resolvedBy: string,
     channel: string,
   ): Promise<Approval | undefined>;
+
+  // --- tool-call approvals (Loop 3) — id-only for get/resolve, same
+  // rationale as getApproval/resolveApproval above: a webhook callback only
+  // ever carries the bare id, never an agentId.
+  createToolCallApproval(approval: ToolCallApproval): Promise<void>;
+  getToolCallApproval(id: string): Promise<ToolCallApproval | undefined>;
+  listPendingToolCallApprovals(agentId: string): Promise<ToolCallApproval[]>;
+  /** Atomically resolve a still-pending tool-call approval. Same CAS contract as resolveApproval. */
+  resolveToolCallApproval(
+    id: string,
+    status: Exclude<ApprovalStatus, 'pending'>,
+    resolvedBy: string,
+    channel: string,
+  ): Promise<ToolCallApproval | undefined>;
 
   recordDriftVerdict(agentId: string, entry: DriftHistoryEntry): Promise<void>;
   listDriftHistory(agentId: string, limit: number): Promise<DriftHistoryEntry[]>;

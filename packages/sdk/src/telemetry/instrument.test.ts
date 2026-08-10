@@ -17,7 +17,7 @@ vi.mock('@opentelemetry/api', async (importOriginal) => {
   };
 });
 
-const { withSkillExecutionSpan } = await import('./instrument.js');
+const { withSkillExecutionSpan, ToolCallDeniedError } = await import('./instrument.js');
 
 beforeEach(() => {
   addMock.mockClear();
@@ -90,5 +90,55 @@ describe('withSkillExecutionSpan', () => {
       agent_id: 'agent-a',
       service_name: 'checkout-svc',
     });
+  });
+
+  it('a policyGate that allows behaves exactly as if it were absent', async () => {
+    const result = await withSkillExecutionSpan({
+      skillName: 'get_weather',
+      skillInput: { city: 'Lagos' },
+      policyGate: async () => ({ allowed: true }),
+      executeSkill: async () => 'ok',
+    });
+    expect(result).toBe('ok');
+    expect(addMock).toHaveBeenCalledWith(1, { tool: 'get_weather', outcome: 'ok' });
+  });
+
+  it('a policyGate that denies throws ToolCallDeniedError, records outcome:denied, and never calls executeSkill', async () => {
+    const executeSkill = vi.fn(async () => 'should not run');
+    await expect(
+      withSkillExecutionSpan({
+        skillName: 'refund_payment',
+        skillInput: { amount: 50000 },
+        agentId: 'agent-a',
+        policyGate: async () => ({ allowed: false, reason: 'amount exceeds auto-approve threshold' }),
+        executeSkill,
+      }),
+    ).rejects.toThrow(ToolCallDeniedError);
+
+    expect(executeSkill).not.toHaveBeenCalled();
+    expect(addMock).toHaveBeenCalledWith(1, {
+      tool: 'refund_payment',
+      outcome: 'denied',
+      agent_id: 'agent-a',
+    });
+    // A denial must not touch the duration histogram — there was no execution to time.
+    expect(recordMock).not.toHaveBeenCalled();
+  });
+
+  it('regression: time spent inside a slow policyGate is excluded from agent.tool.duration (must not contaminate Loop 2\'s p95 drift signal)', async () => {
+    await withSkillExecutionSpan({
+      skillName: 'get_weather',
+      skillInput: {},
+      policyGate: () => new Promise((resolve) => setTimeout(() => resolve({ allowed: true }), 50)),
+      executeSkill: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return 'ok';
+      },
+    });
+
+    expect(recordMock).toHaveBeenCalledTimes(1);
+    const [durationMs] = recordMock.mock.calls[0];
+    // Only executeSkill's ~5ms should be timed, not the gate's ~50ms wait.
+    expect(durationMs).toBeLessThan(40);
   });
 });

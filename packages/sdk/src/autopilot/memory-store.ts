@@ -12,6 +12,7 @@ import type {
   ApprovalStatus,
   DriftHistoryEntry,
   StateStore,
+  ToolCallApproval,
 } from './types.js';
 
 const HISTORY_CAP = 500;
@@ -25,6 +26,8 @@ export class MemoryStateStore implements StateStore {
   private readonly agentState = new Map<string, AgentRuntimeState>();
   private readonly approvals = new Map<string, Approval>();
   private readonly pendingByAgent = new Map<string, Set<string>>();
+  private readonly toolCallApprovals = new Map<string, ToolCallApproval>();
+  private readonly pendingToolCallByAgent = new Map<string, Set<string>>();
   private readonly driftHistory = new Map<string, DriftHistoryEntry[]>();
   private readonly actionLog = new Map<string, ActionLogEntry[]>();
   private readonly cooldowns = new Map<string, number>();
@@ -91,6 +94,47 @@ export class MemoryStateStore implements StateStore {
     };
     this.approvals.set(id, resolved);
     this.pendingByAgent.get(approval.agentId)?.delete(id);
+    return { ...resolved };
+  }
+
+  async createToolCallApproval(approval: ToolCallApproval): Promise<void> {
+    this.toolCallApprovals.set(approval.id, { ...approval });
+    const pending = this.pendingToolCallByAgent.get(approval.agentId) ?? new Set<string>();
+    pending.add(approval.id);
+    this.pendingToolCallByAgent.set(approval.agentId, pending);
+  }
+
+  async getToolCallApproval(id: string): Promise<ToolCallApproval | undefined> {
+    const approval = this.toolCallApprovals.get(id);
+    return approval ? { ...approval } : undefined;
+  }
+
+  async listPendingToolCallApprovals(agentId: string): Promise<ToolCallApproval[]> {
+    const ids = this.pendingToolCallByAgent.get(agentId) ?? new Set<string>();
+    return Array.from(ids)
+      .map((id) => this.toolCallApprovals.get(id))
+      .filter((approval): approval is ToolCallApproval => !!approval && approval.status === 'pending')
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map((approval) => ({ ...approval }));
+  }
+
+  async resolveToolCallApproval(
+    id: string,
+    status: Exclude<ApprovalStatus, 'pending'>,
+    resolvedBy: string,
+    channel: string,
+  ): Promise<ToolCallApproval | undefined> {
+    const approval = this.toolCallApprovals.get(id);
+    if (!approval || approval.status !== 'pending') return undefined;
+    const resolved: ToolCallApproval = {
+      ...approval,
+      status,
+      resolvedBy,
+      channel,
+      resolvedAt: Date.now(),
+    };
+    this.toolCallApprovals.set(id, resolved);
+    this.pendingToolCallByAgent.get(approval.agentId)?.delete(id);
     return { ...resolved };
   }
 

@@ -20,12 +20,14 @@ import type {
   StateStore,
   ApprovalService,
   AutopilotScheduler,
+  ToolCallPolicyRule,
 } from '@driftwatch/sdk';
 import {
   AGENT_ID_PATTERN,
   executeControlAction,
   generateAgentSlug,
   resolveAgentConfig,
+  resolveToolCallPolicies,
 } from '@driftwatch/sdk';
 import type { ServerConfig } from '../config/server-config.js';
 import { isRequestAuthorized } from './auth.js';
@@ -67,16 +69,38 @@ function validateToolNames(toolNames: string[] | undefined, reply: FastifyReply)
   return true;
 }
 
-/** guardrailsSource must reference a different, existing agent — self-refs and dangling refs both 400. */
-async function validateGuardrailsSource(
+/** Rejects (and 400s) any toolPolicies rule whose `tool` isn't a registered tool name or '*'. */
+function validateToolPolicies(
+  toolPolicies: ToolCallPolicyRule[] | undefined,
+  reply: FastifyReply,
+): boolean {
+  if (!toolPolicies) return true;
+  const unknown = toolPolicies
+    .map((rule) => rule.tool)
+    .filter((toolName) => toolName !== '*' && !allToolNames.includes(toolName));
+  if (unknown.length > 0) {
+    reply.code(400).send({ error: `toolPolicies reference unknown tool names: ${unknown.join(', ')}` });
+    return false;
+  }
+  return true;
+}
+
+/**
+ * A reference field (guardrailsSource / toolPoliciesSource) must point at a
+ * different, existing agent — self-refs and dangling refs both 400. Shared
+ * by both fields since the self-ref/dangling-ref check is identical; only
+ * the error message names which field failed.
+ */
+async function validateAgentReference(
   store: StateStore,
-  guardrailsSource: string,
+  refId: string,
   selfId: string,
+  fieldName: string,
   reply: FastifyReply,
 ): Promise<boolean> {
-  const source = guardrailsSource !== selfId ? await store.getAgentDefinition(guardrailsSource) : undefined;
+  const source = refId !== selfId ? await store.getAgentDefinition(refId) : undefined;
   if (!source) {
-    reply.code(400).send({ error: 'guardrailsSource must reference a different, existing agent' });
+    reply.code(400).send({ error: `${fieldName} must reference a different, existing agent` });
     return false;
   }
   return true;
@@ -91,6 +115,8 @@ interface AgentWriteBody {
   guardrailsSource?: string;
   toolNames?: string[];
   driftDetectionEnabled?: boolean;
+  toolPolicies?: ToolCallPolicyRule[];
+  toolPoliciesSource?: string;
 }
 
 export async function registerConsoleRoutes(
@@ -111,8 +137,17 @@ export async function registerConsoleRoutes(
     if (!isRequestAuthorized(request, reply, authToken)) return;
 
     const body = request.body ?? {};
-    const { name, owner, serviceName, guardrails, guardrailsSource, toolNames, driftDetectionEnabled } =
-      body;
+    const {
+      name,
+      owner,
+      serviceName,
+      guardrails,
+      guardrailsSource,
+      toolNames,
+      driftDetectionEnabled,
+      toolPolicies,
+      toolPoliciesSource,
+    } = body;
     if (!name) {
       return reply.code(400).send({ error: 'name (string) required' });
     }
@@ -121,7 +156,14 @@ export async function registerConsoleRoutes(
       return reply.code(400).send({ error: 'id must match ^[a-zA-Z0-9_-]+$' });
     }
     if (!validateToolNames(toolNames, reply)) return;
-    if (guardrailsSource && !(await validateGuardrailsSource(store, guardrailsSource, id, reply))) return;
+    if (!validateToolPolicies(toolPolicies, reply)) return;
+    if (guardrailsSource && !(await validateAgentReference(store, guardrailsSource, id, 'guardrailsSource', reply))) return;
+    if (
+      toolPoliciesSource &&
+      !(await validateAgentReference(store, toolPoliciesSource, id, 'toolPoliciesSource', reply))
+    ) {
+      return;
+    }
 
     // Upsert semantics: re-registering an existing id updates it (preserving
     // createdAt) rather than resetting its history — 200 vs 201 reflects that.
@@ -135,6 +177,8 @@ export async function registerConsoleRoutes(
       guardrailsSource,
       toolNames,
       driftDetectionEnabled,
+      toolPolicies,
+      toolPoliciesSource,
       createdAt: existing?.createdAt ?? Date.now(),
     };
     await store.upsertAgent(definition);
@@ -161,9 +205,22 @@ export async function registerConsoleRoutes(
 
       const body = request.body ?? {};
       if (!validateToolNames(body.toolNames, reply)) return;
+      if (!validateToolPolicies(body.toolPolicies, reply)) return;
       if (
         body.guardrailsSource &&
-        !(await validateGuardrailsSource(store, body.guardrailsSource, agent.id, reply))
+        !(await validateAgentReference(store, body.guardrailsSource, agent.id, 'guardrailsSource', reply))
+      ) {
+        return;
+      }
+      if (
+        body.toolPoliciesSource &&
+        !(await validateAgentReference(
+          store,
+          body.toolPoliciesSource,
+          agent.id,
+          'toolPoliciesSource',
+          reply,
+        ))
       ) {
         return;
       }
@@ -183,6 +240,10 @@ export async function registerConsoleRoutes(
         ...(body.driftDetectionEnabled !== undefined
           ? { driftDetectionEnabled: body.driftDetectionEnabled }
           : {}),
+        // Full replace, not a merge — a rule LIST composes by "which rules
+        // apply," unlike guardrails' flat-record per-field merge above.
+        ...(body.toolPolicies !== undefined ? { toolPolicies: body.toolPolicies } : {}),
+        ...(body.toolPoliciesSource !== undefined ? { toolPoliciesSource: body.toolPoliciesSource } : {}),
       };
       await store.upsertAgent(updated);
       return { agent: updated };
@@ -205,6 +266,12 @@ export async function registerConsoleRoutes(
       const sourceAgent = agent.guardrailsSource
         ? await store.getAgentDefinition(agent.guardrailsSource)
         : undefined;
+      const sourceAgentForTools =
+        agent.toolPoliciesSource === agent.guardrailsSource
+          ? sourceAgent
+          : agent.toolPoliciesSource
+            ? await store.getAgentDefinition(agent.toolPoliciesSource)
+            : undefined;
       return {
         agent: await store.getAgentState(agent.id),
         autopilot: {
@@ -214,6 +281,7 @@ export async function registerConsoleRoutes(
         },
         guardrails: resolveAgentConfig(agent, driftWatchConfig, sourceAgent),
         toolNames: agent.toolNames ?? allToolNames,
+        toolPolicies: resolveToolCallPolicies(agent, sourceAgentForTools),
       };
     },
   );
@@ -267,6 +335,47 @@ export async function registerConsoleRoutes(
       return reply.code(409).send({ error: 'approval missing or already resolved' });
     }
     return { approval: resolved };
+  });
+
+  fastifyServer.get<{ Params: { agentId: string } }>(
+    '/agents/:agentId/tool-calls/pending',
+    async (request, reply) => {
+      if (!isRequestAuthorized(request, reply, authToken)) return;
+      const agent = await requireAgent(store, request.params.agentId, reply);
+      if (!agent) return;
+      return { toolCalls: await store.listPendingToolCallApprovals(agent.id) };
+    },
+  );
+
+  fastifyServer.post<{
+    Params: { agentId: string; id: string };
+    Body: { decision?: string; actor?: string };
+  }>('/agents/:agentId/tool-calls/:id/resolve', async (request, reply) => {
+    if (!isRequestAuthorized(request, reply, authToken)) return;
+    const agent = await requireAgent(store, request.params.agentId, reply);
+    if (!agent) return;
+
+    const decision = request.body?.decision;
+    if (decision !== 'approved' && decision !== 'rejected') {
+      return reply.code(400).send({ error: "decision must be 'approved' or 'rejected'" });
+    }
+
+    // Same cross-agent pre-check as the control-approval resolve route above.
+    const existing = await store.getToolCallApproval(request.params.id);
+    if (!existing || existing.agentId !== agent.id) {
+      return reply.code(404).send({ error: 'tool-call approval not found for this agent' });
+    }
+
+    const actor = request.body?.actor || 'console';
+    // No executeControlAction here, unlike the control-approval route above —
+    // approving a tool-call approval has no AgentRuntimeState mutation to
+    // perform, it only needs to flip status so gateToolCall's poll loop
+    // (already waiting inside the in-flight tool call) observes it.
+    const resolved = await store.resolveToolCallApproval(request.params.id, decision, actor, 'console');
+    if (!resolved) {
+      return reply.code(409).send({ error: 'tool-call approval missing or already resolved' });
+    }
+    return { toolCall: resolved };
   });
 
   fastifyServer.get<{ Params: { agentId: string } }>(

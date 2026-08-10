@@ -3,9 +3,11 @@ import {
   runAgentTask,
   detectBehavioralDrift,
   resolveAgentConfig,
+  resolveToolCallPolicies,
   type ModelClient,
   type DriftWatchConfig,
   type StateStore,
+  type NotifierRegistry,
 } from '@driftwatch/sdk';
 import type { ServerConfig } from '../config/server-config.js';
 import { isRequestAuthorized } from './auth.js';
@@ -21,6 +23,11 @@ export interface RegisterRoutesOptions {
   store: StateStore;
   serverConfig: ServerConfig;
   driftWatchConfig: DriftWatchConfig;
+  /** For notifying pending tool-call approvals (Loop 3) — same registry Autopilot uses. */
+  notifiers: NotifierRegistry;
+  /** How long a pre-execution tool-call approval waits before toolCallApprovalTimeoutDecision applies. */
+  toolCallApprovalTimeoutMs: number;
+  toolCallApprovalTimeoutDecision: 'approved' | 'rejected';
 }
 
 /** Thrown when an :agentId route param (or the auto-registered default) isn't registered. */
@@ -34,7 +41,16 @@ export async function registerRoutes(
   fastifyServer: FastifyInstance,
   options: RegisterRoutesOptions,
 ): Promise<void> {
-  const { modelClient, modelRegistry, store, serverConfig, driftWatchConfig } = options;
+  const {
+    modelClient,
+    modelRegistry,
+    store,
+    serverConfig,
+    driftWatchConfig,
+    notifiers,
+    toolCallApprovalTimeoutMs,
+    toolCallApprovalTimeoutDecision,
+  } = options;
 
   /**
    * Pick the client for the next agent run: the model Autopilot has switched
@@ -57,6 +73,18 @@ export async function registerRoutes(
       : undefined;
     const resolvedConfig = resolveAgentConfig(agent, driftWatchConfig, sourceAgent);
 
+    // Reuse the already-fetched sourceAgent when both reference fields point
+    // at the same agent — guardrailsSource and toolPoliciesSource are
+    // deliberately independent (different axes a deployer may compose
+    // differently), so they aren't assumed to match.
+    const sourceAgentForTools =
+      agent.toolPoliciesSource === agent.guardrailsSource
+        ? sourceAgent
+        : agent.toolPoliciesSource
+          ? await store.getAgentDefinition(agent.toolPoliciesSource)
+          : undefined;
+    const toolPolicies = resolveToolCallPolicies(agent, sourceAgentForTools);
+
     return runAgentTask({
       prompt,
       modelClient: await resolveAgentModel(agentId),
@@ -64,6 +92,16 @@ export async function registerRoutes(
         toolNames: agent.toolNames,
         agentId,
         serviceName: agent.serviceName,
+        policyGateContext:
+          toolPolicies.length > 0
+            ? {
+                toolPolicies,
+                store,
+                notifiers,
+                approvalTimeoutMs: toolCallApprovalTimeoutMs,
+                timeoutDecision: toolCallApprovalTimeoutDecision,
+              }
+            : undefined,
       }),
       maxSteps: resolvedConfig.maxSteps,
       guardrails: {

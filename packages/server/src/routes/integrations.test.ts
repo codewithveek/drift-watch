@@ -51,7 +51,7 @@ async function buildApp(config: ServerConfig) {
     timeoutDecision: 'rejected',
   });
   const fastify = Fastify({ logger: false });
-  await registerIntegrationRoutes(fastify, { approvalService, serverConfig: config });
+  await registerIntegrationRoutes(fastify, { approvalService, store, serverConfig: config });
   await fastify.ready();
   app = fastify;
   return { fastify, store, approvalService };
@@ -139,6 +139,34 @@ describe('POST /integrations/slack/actions', () => {
     expect(await store.listPendingApprovals(TEST_AGENT_ID)).toHaveLength(1);
   });
 
+  it('falls back to resolving a tool-call approval when the id is not a control approval', async () => {
+    const { fastify, store } = await buildApp(serverConfig());
+    await store.createToolCallApproval({
+      id: 'tc-1',
+      agentId: TEST_AGENT_ID,
+      tool: 'refund_payment',
+      status: 'pending',
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+    });
+    const { body, ts, signature } = signedSlackRequest('tc-1', 'dw_approve');
+
+    const res = await fastify.inject({
+      method: 'POST',
+      url: '/integrations/slack/actions',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'x-slack-signature': signature,
+        'x-slack-request-timestamp': ts,
+      },
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().text).toContain('refund_payment');
+    expect((await store.getToolCallApproval('tc-1'))?.status).toBe('approved');
+  });
+
   it('returns 503 when Slack is not configured', async () => {
     const { fastify } = await buildApp(serverConfig({ slackSigningSecret: '' }));
     const { body, ts, signature } = signedSlackRequest('missing', 'dw_approve');
@@ -189,6 +217,30 @@ describe('POST /integrations/telegram/webhook', () => {
 
     expect(res.statusCode).toBe(200);
     expect((await store.getAgentState(TEST_AGENT_ID)).status).toBe('paused');
+  });
+
+  it('falls back to resolving a tool-call approval when the id is not a control approval', async () => {
+    const { fastify, store } = await buildApp(serverConfig());
+    await store.createToolCallApproval({
+      id: 'tc-1',
+      agentId: TEST_AGENT_ID,
+      tool: 'refund_payment',
+      status: 'pending',
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const res = await fastify.inject({
+      method: 'POST',
+      url: '/integrations/telegram/webhook',
+      headers: { 'x-telegram-bot-api-secret-token': TELEGRAM_SECRET },
+      payload: {
+        callback_query: { id: 'cbq-1', data: `dw_approve:tc-1`, from: { username: 'bob' } },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect((await store.getToolCallApproval('tc-1'))?.status).toBe('approved');
   });
 
   it('rejects a wrong secret token with 401', async () => {

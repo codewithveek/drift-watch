@@ -48,6 +48,9 @@ await registerRoutes(fastifyServer, {
   store: autopilot.store,
   serverConfig,
   driftWatchConfig,
+  notifiers: autopilot.notifiers,
+  toolCallApprovalTimeoutMs: serverConfig.toolCallApprovalTimeoutMs,
+  toolCallApprovalTimeoutDecision: serverConfig.toolCallApprovalTimeoutDecision,
 });
 await registerConsoleRoutes(fastifyServer, {
   store: autopilot.store,
@@ -58,6 +61,7 @@ await registerConsoleRoutes(fastifyServer, {
 });
 await registerIntegrationRoutes(fastifyServer, {
   approvalService: autopilot.approvalService,
+  store: autopilot.store,
   serverConfig,
 });
 

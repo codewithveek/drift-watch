@@ -95,6 +95,9 @@ async function buildTestServer(
     store,
     serverConfig,
     driftWatchConfig: DriftWatchConfigSchema.parse({}),
+    notifiers: { list: [] },
+    toolCallApprovalTimeoutMs: 300,
+    toolCallApprovalTimeoutDecision: 'rejected',
   });
   await fastifyServer.ready();
   currentServer = fastifyServer;
@@ -439,5 +442,43 @@ describe('agent-scoped /run and /drift', () => {
     expect(defaultCall.agentId).toBe('default');
     expect(Object.keys(defaultCall.tools).sort()).toEqual(['get_weather', 'search_docs']);
     expect(defaultCall.guardrails.maxTokensPerTask).toBe(0);
+  });
+
+  it('a deny toolPolicies rule makes the built tool throw ToolCallDeniedError instead of executing (the model would see this as a tool error, not a 500)', async () => {
+    const server = await buildTestServer({ authToken: 'secret' });
+    await currentStore!.upsertAgent({
+      id: 'gated-agent',
+      name: 'Gated Agent',
+      toolPolicies: [
+        { tool: 'get_weather', condition: {}, action: 'deny', severity: 'medium', reason: 'demo deny' },
+      ],
+      createdAt: Date.now(),
+    });
+
+    await server.inject({
+      method: 'POST',
+      url: '/agents/gated-agent/run',
+      headers: { authorization: 'Bearer secret' },
+      payload: { prompt: 'hi' },
+    });
+
+    const call = runAgentTaskMock.mock.calls.at(-1)![0];
+    expect(call.agentId).toBe('gated-agent');
+    // The real buildAgentTools-constructed tool is what generateText would
+    // call — since runAgentTask itself is mocked here, exercise it directly.
+    await expect(call.tools.get_weather.execute({ city: 'Lagos' }, {})).rejects.toThrow('demo deny');
+  });
+
+  it('an agent with no toolPolicies configured gets tools with no policyGate at all (zero overhead, unchanged behavior)', async () => {
+    const server = await buildTestServer({ authToken: 'secret' });
+    await server.inject({
+      method: 'POST',
+      url: '/run',
+      headers: { authorization: 'Bearer secret' },
+      payload: { prompt: 'hi' },
+    });
+    const call = runAgentTaskMock.mock.calls.at(-1)![0];
+    const result = await call.tools.get_weather.execute({ city: 'Lagos' }, {});
+    expect(result.city).toBe('Lagos');
   });
 });

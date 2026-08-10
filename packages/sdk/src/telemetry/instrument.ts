@@ -52,6 +52,14 @@ function getSkillInstruments(): { calls: Counter; duration: Histogram } {
   return cachedInstruments;
 }
 
+/** Thrown when a policyGate denies a tool call — see WithSkillExecutionSpanOptions.policyGate. */
+export class ToolCallDeniedError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'ToolCallDeniedError';
+  }
+}
+
 export interface WithSkillExecutionSpanOptions<SkillResult> {
   skillName: string;
   skillInput: unknown;
@@ -60,17 +68,45 @@ export interface WithSkillExecutionSpanOptions<SkillResult> {
   agentId?: string;
   /** The agent's OTel service.name, if known — see buildAgentLabels. */
   serviceName?: string;
+  /**
+   * Pre-execution policy check (Loop 3 — see autopilot/tool-call-gate.ts).
+   * Called and fully resolved BEFORE `executionStartTimeMs` is captured and
+   * the `tool.${skillName}` span starts — this is deliberate, not
+   * incidental: a `require_approval` gate can wait anywhere from seconds to
+   * minutes for a human, and `agent.tool.duration` feeds Loop 2's p95-delta
+   * drift trigger (see drift/prometheus-source.ts). If approval-wait time
+   * leaked into that histogram, a slow human clicking "Approve" would look
+   * like a latency spike and could cause Loop 2 to autonomously react to
+   * what is actually just approval latency, not real drift. Keep this
+   * ordering if you ever touch this function.
+   */
+  policyGate?: (skillInput: unknown) => Promise<{ allowed: boolean; reason?: string }>;
 }
 
 /** Wraps a skill (tool) call. Every invocation -> one span + counter increment. */
 export async function withSkillExecutionSpan<SkillResult>(
   options: WithSkillExecutionSpanOptions<SkillResult>,
 ): Promise<SkillResult> {
-  const { skillName, skillInput, executeSkill, agentId, serviceName } = options;
-  const executionStartTimeMs = performance.now();
+  const { skillName, skillInput, executeSkill, agentId, serviceName, policyGate } = options;
   const { calls: skillInvocationCounter, duration: skillExecutionDurationHistogram } =
     getSkillInstruments();
   const agentLabels = buildAgentLabels(agentId, serviceName);
+
+  if (policyGate) {
+    const gate = await policyGate(skillInput);
+    if (!gate.allowed) {
+      const reason = gate.reason ?? `tool call denied by policy: ${skillName}`;
+      skillInvocationCounter.add(1, { tool: skillName, outcome: 'denied', ...agentLabels });
+      const deniedSpan = tracer.startSpan(`tool.${skillName}`);
+      deniedSpan.setAttribute('agent.tool.name', skillName);
+      deniedSpan.setAttributes(agentLabels);
+      deniedSpan.setStatus({ code: SpanStatusCode.ERROR, message: reason });
+      deniedSpan.end();
+      throw new ToolCallDeniedError(reason);
+    }
+  }
+
+  const executionStartTimeMs = performance.now();
 
   return tracer.startActiveSpan(`tool.${skillName}`, async (span) => {
     span.setAttribute('agent.tool.name', skillName);

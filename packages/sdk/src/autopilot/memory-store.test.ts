@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { MemoryStateStore } from './memory-store.js';
-import type { Approval } from './types.js';
+import type { Approval, ToolCallApproval } from './types.js';
 
 function pendingApproval(id: string, agentId: string): Approval {
   return {
@@ -10,6 +10,19 @@ function pendingApproval(id: string, agentId: string): Approval {
     severity: 'high',
     reasons: ['token spend spiked'],
     recommendedAction: 'pause and investigate',
+    status: 'pending',
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 60_000,
+  };
+}
+
+function pendingToolCallApproval(id: string, agentId: string): ToolCallApproval {
+  return {
+    id,
+    agentId,
+    tool: 'refund_payment',
+    fieldPath: 'amount',
+    matchedReason: 'large refund',
     status: 'pending',
     createdAt: Date.now(),
     expiresAt: Date.now() + 60_000,
@@ -152,6 +165,44 @@ describe('MemoryStateStore', () => {
 
       expect((await store.listPendingApprovals('agent-1')).map((a) => a.id)).toEqual(['a1']);
       expect((await store.listPendingApprovals('agent-2')).map((a) => a.id)).toEqual(['a2']);
+    });
+  });
+
+  describe('tool-call approvals', () => {
+    it('lists only pending tool-call approvals', async () => {
+      const store = new MemoryStateStore();
+      await store.createToolCallApproval(pendingToolCallApproval('a', 'agent-1'));
+      await store.createToolCallApproval(pendingToolCallApproval('b', 'agent-1'));
+      await store.resolveToolCallApproval('b', 'approved', 'console', 'console');
+      const pending = await store.listPendingToolCallApprovals('agent-1');
+      expect(pending.map((p) => p.id)).toEqual(['a']);
+    });
+
+    it('resolves a tool-call approval exactly once (idempotency guard)', async () => {
+      const store = new MemoryStateStore();
+      await store.createToolCallApproval(pendingToolCallApproval('a', 'agent-1'));
+      const first = await store.resolveToolCallApproval('a', 'approved', 'u1', 'slack');
+      const second = await store.resolveToolCallApproval('a', 'rejected', 'u2', 'telegram');
+      expect(first?.status).toBe('approved');
+      expect(first?.resolvedBy).toBe('u1');
+      expect(second).toBeUndefined();
+    });
+
+    it('resolving a missing id returns undefined', async () => {
+      const store = new MemoryStateStore();
+      expect(await store.resolveToolCallApproval('never-created', 'approved', 'u1', 'console')).toBeUndefined();
+    });
+
+    it('keeps pending tool-call approvals isolated between agents, separate from control approvals', async () => {
+      const store = new MemoryStateStore();
+      await store.createToolCallApproval(pendingToolCallApproval('tc1', 'agent-1'));
+      await store.createToolCallApproval(pendingToolCallApproval('tc2', 'agent-2'));
+      await store.createApproval(pendingApproval('a1', 'agent-1'));
+
+      expect((await store.listPendingToolCallApprovals('agent-1')).map((a) => a.id)).toEqual(['tc1']);
+      expect((await store.listPendingToolCallApprovals('agent-2')).map((a) => a.id)).toEqual(['tc2']);
+      // control approvals for the same agent are a distinct pool
+      expect((await store.listPendingApprovals('agent-1')).map((a) => a.id)).toEqual(['a1']);
     });
   });
 

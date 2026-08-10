@@ -19,6 +19,7 @@ import type {
   ApprovalStatus,
   DriftHistoryEntry,
   StateStore,
+  ToolCallApproval,
 } from './types.js';
 
 const HISTORY_CAP = 500;
@@ -29,6 +30,8 @@ const KEY = {
   agentState: (agentId: string) => `dw:agent:${agentId}:state`,
   approval: (id: string) => `dw:approval:${id}`,
   pendingApprovals: (agentId: string) => `dw:agent:${agentId}:approvals:pending`,
+  toolCallApproval: (id: string) => `dw:toolcall-approval:${id}`,
+  pendingToolCallApprovals: (agentId: string) => `dw:agent:${agentId}:toolcall-approvals:pending`,
   driftHistory: (agentId: string) => `dw:agent:${agentId}:drift:history`,
   actionLog: (agentId: string) => `dw:agent:${agentId}:action:log`,
   cooldown: (agentId: string, key: string) => `dw:agent:${agentId}:cooldown:${key}`,
@@ -67,6 +70,28 @@ approval.resolvedAt = tonumber(ARGV[4])
 local updated = cjson.encode(approval)
 redis.call('SET', KEYS[1], updated)
 redis.call('SREM', 'dw:agent:' .. approval.agentId .. ':approvals:pending', ARGV[5])
+return updated
+`;
+
+/**
+ * Same CAS pattern as RESOLVE_APPROVAL_LUA, kept as a separate script rather
+ * than parameterizing one shared script over both key prefixes — each is
+ * already tightly coupled to its own type's exact field shape via cjson, and
+ * a tool-call approval is a genuinely different kind of event (see
+ * ToolCallApproval's docblock in types.ts), not a hardship to keep parallel.
+ */
+const RESOLVE_TOOL_CALL_APPROVAL_LUA = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return '' end
+local approval = cjson.decode(raw)
+if approval.status ~= 'pending' then return '' end
+approval.status = ARGV[1]
+approval.resolvedBy = ARGV[2]
+approval.channel = ARGV[3]
+approval.resolvedAt = tonumber(ARGV[4])
+local updated = cjson.encode(approval)
+redis.call('SET', KEYS[1], updated)
+redis.call('SREM', 'dw:agent:' .. approval.agentId .. ':toolcall-approvals:pending', ARGV[5])
 return updated
 `;
 
@@ -153,6 +178,51 @@ export class RedisStateStore implements StateStore {
       id,
     )) as string;
     return result ? (JSON.parse(result) as Approval) : undefined;
+  }
+
+  async createToolCallApproval(approval: ToolCallApproval): Promise<void> {
+    await this.redis
+      .multi()
+      .set(KEY.toolCallApproval(approval.id), JSON.stringify(approval))
+      .sadd(KEY.pendingToolCallApprovals(approval.agentId), approval.id)
+      .exec();
+  }
+
+  async getToolCallApproval(id: string): Promise<ToolCallApproval | undefined> {
+    const raw = await this.redis.get(KEY.toolCallApproval(id));
+    return raw ? (JSON.parse(raw) as ToolCallApproval) : undefined;
+  }
+
+  async listPendingToolCallApprovals(agentId: string): Promise<ToolCallApproval[]> {
+    const ids = await this.redis.smembers(KEY.pendingToolCallApprovals(agentId));
+    if (ids.length === 0) return [];
+    const raws = await this.redis.mget(ids.map((id) => KEY.toolCallApproval(id)));
+    const approvals: ToolCallApproval[] = [];
+    for (const raw of raws) {
+      if (!raw) continue;
+      const approval = JSON.parse(raw) as ToolCallApproval;
+      if (approval.status === 'pending') approvals.push(approval);
+    }
+    return approvals.sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  async resolveToolCallApproval(
+    id: string,
+    status: Exclude<ApprovalStatus, 'pending'>,
+    resolvedBy: string,
+    channel: string,
+  ): Promise<ToolCallApproval | undefined> {
+    const result = (await this.redis.eval(
+      RESOLVE_TOOL_CALL_APPROVAL_LUA,
+      1,
+      KEY.toolCallApproval(id),
+      status,
+      resolvedBy,
+      channel,
+      String(Date.now()),
+      id,
+    )) as string;
+    return result ? (JSON.parse(result) as ToolCallApproval) : undefined;
   }
 
   async recordDriftVerdict(agentId: string, entry: DriftHistoryEntry): Promise<void> {

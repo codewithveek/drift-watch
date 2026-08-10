@@ -55,6 +55,7 @@ export { bootstrapTelemetry } from './telemetry/otel.js';
 export { AiSdkOtelIntegration } from './telemetry/ai-sdk-otel.js';
 export {
   withSkillExecutionSpan,
+  ToolCallDeniedError,
   type WithSkillExecutionSpanOptions,
 } from './telemetry/instrument.js';
 export {
@@ -72,12 +73,14 @@ export {
   AGENT_ID_PATTERN,
   generateAgentSlug,
   categorizeAction,
+  resolveToolCallPolicies,
   type ActionType,
   type ActionCategory,
   type ActionIntent,
   type DriftSeverity,
   type Approval,
   type ApprovalStatus,
+  type ToolCallApproval,
   type AgentRuntimeState,
   type AgentStatus,
   type AgentDefinition,
@@ -99,6 +102,21 @@ export {
   type PolicyCondition,
   type WindowDeltas,
 } from './autopilot/policy.js';
+export {
+  evaluateToolCallPolicy,
+  getByPath,
+  ToolCallPolicyRuleSchema,
+  ToolCallConditionSchema,
+  type ToolCallPolicyRule,
+  type ToolCallCondition,
+  type ToolCallGateAction,
+  type ToolCallPolicyVerdict,
+} from './autopilot/tool-call-policy.js';
+export {
+  gateToolCall,
+  type GateToolCallOptions,
+  type GateToolCallResult,
+} from './autopilot/tool-call-gate.js';
 export { MemoryStateStore } from './autopilot/memory-store.js';
 export {
   notifierForAction,

@@ -58,6 +58,9 @@ describe('live edit: PATCH via console routes takes effect on the next /run', ()
       store,
       serverConfig,
       driftWatchConfig,
+      notifiers: { list: [] },
+      toolCallApprovalTimeoutMs: 300,
+      toolCallApprovalTimeoutDecision: 'rejected',
     });
     await registerConsoleRoutes(fastify, {
       store,
@@ -92,5 +95,57 @@ describe('live edit: PATCH via console routes takes effect on the next /run', ()
     });
     const after = runAgentTaskMock.mock.calls.at(-1)![0];
     expect(after.guardrails.maxTokensPerTask).toBe(42);
+  });
+
+  it('a toolPolicies PATCH takes effect on the very next run — no restart, no polling', async () => {
+    runAgentTaskMock.mockResolvedValue(fakeAgentTaskResult);
+
+    const store = new MemoryStateStore();
+    const approvalService = new ApprovalService({
+      store,
+      notifiers: { list: [] },
+      approvalTimeoutMs: 60_000,
+      timeoutDecision: 'rejected',
+    });
+    const serverConfig: ServerConfig = ServerConfigSchema.parse({ agentId: 'default' });
+    const driftWatchConfig = DriftWatchConfigSchema.parse({});
+
+    const fastify = Fastify({ logger: false });
+    await registerRoutes(fastify, {
+      modelClient: 'fake-model' as unknown as ModelClient,
+      modelRegistry: {},
+      store,
+      serverConfig,
+      driftWatchConfig,
+      notifiers: { list: [] },
+      toolCallApprovalTimeoutMs: 300,
+      toolCallApprovalTimeoutDecision: 'rejected',
+    });
+    await registerConsoleRoutes(fastify, { store, serverConfig, driftWatchConfig, approvalService });
+    await fastify.ready();
+    app = fastify;
+
+    await store.upsertAgent({ id: 'agent-1', name: 'Agent One', createdAt: Date.now() });
+
+    await fastify.inject({ method: 'POST', url: '/agents/agent-1/run', payload: { prompt: 'hi' } });
+    const before = runAgentTaskMock.mock.calls.at(-1)![0];
+    await expect(before.tools.get_weather.execute({ city: 'Lagos' }, {})).resolves.toMatchObject({
+      city: 'Lagos',
+    });
+
+    const patched = await fastify.inject({
+      method: 'PATCH',
+      url: '/agents/agent-1',
+      payload: {
+        toolPolicies: [
+          { tool: 'get_weather', action: 'deny', severity: 'medium', reason: 'now denied' },
+        ],
+      },
+    });
+    expect(patched.statusCode).toBe(200);
+
+    await fastify.inject({ method: 'POST', url: '/agents/agent-1/run', payload: { prompt: 'hi' } });
+    const after = runAgentTaskMock.mock.calls.at(-1)![0];
+    await expect(after.tools.get_weather.execute({ city: 'Lagos' }, {})).rejects.toThrow('now denied');
   });
 });

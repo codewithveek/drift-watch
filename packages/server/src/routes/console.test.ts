@@ -142,6 +142,56 @@ describe('GET/POST /agents', () => {
     });
     expect(response.statusCode).toBe(400);
   });
+
+  it('accepts toolPolicies referencing a registered tool name, and the wildcard', async () => {
+    const { fastify } = await buildApp();
+    const response = await fastify.inject({
+      method: 'POST',
+      url: '/agents',
+      payload: {
+        name: 'Gated Agent',
+        toolPolicies: [
+          { tool: 'get_weather', action: 'deny', severity: 'medium' },
+          { tool: '*', action: 'require_approval', severity: 'low' },
+        ],
+      },
+    });
+    expect(response.statusCode).toBe(201);
+    expect(response.json().agent.toolPolicies).toHaveLength(2);
+  });
+
+  it('rejects toolPolicies referencing an unknown tool name with 400', async () => {
+    const { fastify } = await buildApp();
+    const response = await fastify.inject({
+      method: 'POST',
+      url: '/agents',
+      payload: {
+        name: 'Bad Policy Agent',
+        toolPolicies: [{ tool: 'not_a_real_tool', action: 'deny', severity: 'medium' }],
+      },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('rejects a toolPoliciesSource that self-references at registration with 400', async () => {
+    const { fastify } = await buildApp();
+    const response = await fastify.inject({
+      method: 'POST',
+      url: '/agents',
+      payload: { id: 'self-ref-policy', name: 'Self Ref', toolPoliciesSource: 'self-ref-policy' },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('rejects a toolPoliciesSource pointing at a nonexistent agent with 400', async () => {
+    const { fastify } = await buildApp();
+    const response = await fastify.inject({
+      method: 'POST',
+      url: '/agents',
+      payload: { name: 'Dangling Policy Ref', toolPoliciesSource: 'does-not-exist' },
+    });
+    expect(response.statusCode).toBe(400);
+  });
 });
 
 describe('GET /agents/:agentId (raw definition)', () => {
@@ -239,6 +289,157 @@ describe('PATCH /agents/:agentId', () => {
 
     const after = await fastify.inject({ method: 'GET', url: '/agents/agent-1/state' });
     expect(after.json().guardrails.maxTokensPerTask).toBe(42);
+  });
+
+  it('toolPolicies is a full replace, not a merge — patching again drops rules not resent', async () => {
+    const { fastify, store } = await buildApp();
+    await store.upsertAgent({
+      id: 'agent-1',
+      name: 'Agent One',
+      toolPolicies: [{ tool: 'get_weather', condition: {}, action: 'deny', severity: 'medium' }],
+      createdAt: 1,
+    });
+
+    const response = await fastify.inject({
+      method: 'PATCH',
+      url: '/agents/agent-1',
+      payload: {
+        toolPolicies: [{ tool: 'search_docs', condition: {}, action: 'require_approval', severity: 'low' }],
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().agent.toolPolicies).toEqual([
+      { tool: 'search_docs', condition: {}, action: 'require_approval', severity: 'low' },
+    ]);
+  });
+
+  it('rejects toolPolicies referencing an unknown tool name with 400', async () => {
+    const { fastify, store } = await buildApp();
+    await store.upsertAgent({ id: 'agent-1', name: 'Agent One', createdAt: 1 });
+
+    const response = await fastify.inject({
+      method: 'PATCH',
+      url: '/agents/agent-1',
+      payload: { toolPolicies: [{ tool: 'not_a_real_tool', action: 'deny', severity: 'medium' }] },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('rejects a toolPoliciesSource self-reference with 400', async () => {
+    const { fastify, store } = await buildApp();
+    await store.upsertAgent({ id: 'agent-1', name: 'Agent One', createdAt: 1 });
+
+    const response = await fastify.inject({
+      method: 'PATCH',
+      url: '/agents/agent-1',
+      payload: { toolPoliciesSource: 'agent-1' },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+});
+
+describe('tool-call approvals', () => {
+  it('GET /agents/:agentId/tool-calls/pending lists only pending ones for that agent', async () => {
+    const { fastify, store } = await buildApp();
+    await store.upsertAgent({ id: 'agent-1', name: 'Agent One', createdAt: 1 });
+    await store.upsertAgent({ id: 'agent-2', name: 'Agent Two', createdAt: 2 });
+    await store.createToolCallApproval({
+      id: 'tc-1',
+      agentId: 'agent-1',
+      tool: 'refund_payment',
+      status: 'pending',
+      createdAt: 1,
+      expiresAt: Date.now() + 60_000,
+    });
+    await store.createToolCallApproval({
+      id: 'tc-2',
+      agentId: 'agent-2',
+      tool: 'refund_payment',
+      status: 'pending',
+      createdAt: 1,
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const response = await fastify.inject({ method: 'GET', url: '/agents/agent-1/tool-calls/pending' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().toolCalls.map((t: { id: string }) => t.id)).toEqual(['tc-1']);
+  });
+
+  it('POST /agents/:agentId/tool-calls/:id/resolve approves without executing a control action', async () => {
+    const { fastify, store } = await buildApp();
+    await store.upsertAgent({ id: 'agent-1', name: 'Agent One', createdAt: 1 });
+    await store.createToolCallApproval({
+      id: 'tc-1',
+      agentId: 'agent-1',
+      tool: 'refund_payment',
+      status: 'pending',
+      createdAt: 1,
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const response = await fastify.inject({
+      method: 'POST',
+      url: '/agents/agent-1/tool-calls/tc-1/resolve',
+      payload: { decision: 'approved' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().toolCall.status).toBe('approved');
+    // Approving a tool-call approval must not touch agent runtime status —
+    // there's no control action here, only a status flip.
+    expect((await store.getAgentState('agent-1')).status).toBe('running');
+  });
+
+  it('404s resolving a tool-call approval that belongs to a different agent', async () => {
+    const { fastify, store } = await buildApp();
+    await store.upsertAgent({ id: 'agent-1', name: 'Agent One', createdAt: 1 });
+    await store.upsertAgent({ id: 'agent-2', name: 'Agent Two', createdAt: 2 });
+    await store.createToolCallApproval({
+      id: 'tc-1',
+      agentId: 'agent-2',
+      tool: 'refund_payment',
+      status: 'pending',
+      createdAt: 1,
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const response = await fastify.inject({
+      method: 'POST',
+      url: '/agents/agent-1/tool-calls/tc-1/resolve',
+      payload: { decision: 'approved' },
+    });
+    expect(response.statusCode).toBe(404);
+  });
+
+  it('409s resolving an already-resolved tool-call approval', async () => {
+    const { fastify, store } = await buildApp();
+    await store.upsertAgent({ id: 'agent-1', name: 'Agent One', createdAt: 1 });
+    await store.createToolCallApproval({
+      id: 'tc-1',
+      agentId: 'agent-1',
+      tool: 'refund_payment',
+      status: 'pending',
+      createdAt: 1,
+      expiresAt: Date.now() + 60_000,
+    });
+    await store.resolveToolCallApproval('tc-1', 'rejected', 'someone-else', 'console');
+
+    const response = await fastify.inject({
+      method: 'POST',
+      url: '/agents/agent-1/tool-calls/tc-1/resolve',
+      payload: { decision: 'approved' },
+    });
+    expect(response.statusCode).toBe(409);
+  });
+
+  it('rejects an invalid decision with 400', async () => {
+    const { fastify, store } = await buildApp();
+    await store.upsertAgent({ id: 'agent-1', name: 'Agent One', createdAt: 1 });
+    const response = await fastify.inject({
+      method: 'POST',
+      url: '/agents/agent-1/tool-calls/tc-1/resolve',
+      payload: { decision: 'maybe' },
+    });
+    expect(response.statusCode).toBe(400);
   });
 });
 
