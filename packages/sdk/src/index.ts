@@ -6,6 +6,7 @@ export {
   DriftDetectionConfigSchema,
   loadDriftWatchConfigFromEnv,
   resolveAgentConfig,
+  toAgentGuardrails,
   type DriftWatchConfig,
   type TelemetryConfig,
   type AgentConfig,
@@ -26,6 +27,14 @@ export {
   type RunAgentTaskOptions,
   type AgentTaskResult,
 } from './agent/runner.js';
+export {
+  createAgentRuntime,
+  type AgentRuntime,
+  type AgentSource,
+  type CreateAgentRuntimeOptions,
+  type SkillCallOptions,
+  type RunOptions,
+} from './agent/runtime.js';
 export {
   estimateCostUsd,
   evaluateGuardrailBreach,

@@ -49,6 +49,9 @@ import { loadDriftWatchConfigFromEnv } from '@driftwatch/sdk';
 const config = loadDriftWatchConfigFromEnv(); // reads process.env
 ```
 
+Start the process with `node --env-file=.env` so those values are in
+`process.env` before anything reads them. (Node 20.6+ — no `dotenv` needed.)
+
 **Option B — build the config object yourself** and validate it against the same
 schema:
 
@@ -64,9 +67,9 @@ const config = DriftWatchConfigSchema.parse({
 
 <Callout type="warn" title="Load your .env before you read it">
   `loadDriftWatchConfigFromEnv()` reads `process.env`. If you keep values in a
-  `.env` file, load them first: add `import 'dotenv/config'` as the very first
-  line of your entry file, or start the process with `node --env-file=.env`.
-  Otherwise the values are not in `process.env` yet, and you get the defaults.
+  `.env` file, start the process with `node --env-file=.env` (or your platform's
+  own env injection). Otherwise the values are not in `process.env` yet, and you
+  silently get the defaults.
 </Callout>
 
 Every field and its environment variable is listed in
@@ -75,18 +78,37 @@ Every field and its environment variable is listed in
 ### 3. Start telemetry
 
 `bootstrapTelemetry` starts OpenTelemetry and sends traces, metrics, and logs to
-any OTLP-compatible backend. It must run **before** your application code, in a
-**separate file**, loaded with `--import`. This is not a style choice: OpenTelemetry
-instruments modules (`fetch`, `http`, …) by patching them the moment they load. If
-your application file has already imported those modules by the time
-`bootstrapTelemetry` runs, the patch is too late, and nothing is captured.
+any OTLP-compatible backend. The SDK ships it ready-made as a preload, so the
+usual case needs no file of your own:
+
+```bash
+node --env-file=.env --import @driftwatch/sdk/preload app.js
+```
+
+That's the same call you'd otherwise hand-write, reading its config from the
+environment. If you build a `DriftWatchConfig` in code instead, write your own
+one-line module and `--import` that:
 
 ```ts title="telemetry.ts"
-import 'dotenv/config'; // load .env into process.env before anything reads it
-import { bootstrapTelemetry, loadDriftWatchConfigFromEnv } from '@driftwatch/sdk';
+import { bootstrapTelemetry } from '@driftwatch/sdk';
 
-bootstrapTelemetry(loadDriftWatchConfigFromEnv().telemetry);
+bootstrapTelemetry({ serviceName: 'my-agent', otlpEndpoint: 'http://localhost:4318' });
 ```
+
+<Callout title="Why a separate module, rather than a call at the top of your app?">
+  ESM hoists every `import` above the body of the file that contains them, so
+  `bootstrapTelemetry()` written "at the top" of your entry file still runs
+  *after* every imported module has been evaluated. `--import` is the only way
+  to run it genuinely first.
+
+  How much that costs depends on what you use. DriftWatch's own signals are
+  unaffected either way — `getTracer` returns a proxy that upgrades when the
+  provider registers, and the metric instruments bind lazily for exactly this
+  reason. `fetch`-based HTTP spans are unaffected too, since that
+  instrumentation uses `diagnostics_channel` rather than import-time patching.
+  What genuinely needs the preload is import-time-patched instrumentation:
+  **pino, Fastify, and database drivers**.
+</Callout>
 
 With no `OTEL_EXPORTER_OTLP_ENDPOINT` set, this defaults to
 `http://localhost:4318`. If nothing is listening there, the exporter logs a
@@ -136,12 +158,12 @@ console.log(result.responseText);
 console.log(result.skillsUsed, result.tokenUsage);
 ```
 
-Run `agent.ts` with `telemetry.ts` preloaded ahead of it. `dotenv/config` in
-`telemetry.ts` already loads `.env`, including `OPENAI_API_KEY`, so this command
-is the same on macOS, Linux, and Windows:
+Run it with telemetry preloaded ahead of it. `--env-file` loads `.env`
+(including `OPENAI_API_KEY`) before anything reads it, so this command is the
+same on macOS, Linux, and Windows:
 
 ```bash
-npx tsx --import ./telemetry.ts ./agent.ts
+npx tsx --env-file=.env --import @driftwatch/sdk/preload ./agent.ts
 ```
 
 You get the model's answer and the exact usage for that call:
@@ -156,6 +178,68 @@ backend), which tools ran, the step count, and exact token usage — per call, w
 no round trip to a backend. With telemetry flowing, the same call also lands in
 your OTel backend as a trace within moments — see
 [Verify it's flowing](/docs/prometheus#verify-its-flowing).
+
+## Less wiring: `createAgentRuntime`
+
+Everything above uses the SDK's primitives directly, which is the right level
+when you want full control. Once an agent has its own guardrails and tool-call
+policies, though, wiring each tool by hand means repeating the agent id on the
+span and the gate, repeating the tool's name in two places that must match
+exactly, and re-spreading a resolved config into the guardrails shape.
+
+`createAgentRuntime` binds that context once. It's optional sugar — every
+primitive below stays public and unchanged:
+
+```ts
+import { createAgentRuntime, DriftWatchConfigSchema, generateAgentSlug } from '@driftwatch/sdk';
+import { tool } from 'ai';
+import { z } from 'zod';
+
+const runtime = createAgentRuntime({
+  agent: {
+    id: generateAgentSlug('Support Agent'),   // -> "support-agent-9e930e"
+    name: 'Support Agent',
+    guardrails: { maxTokensPerTask: 20_000 },
+    toolPolicies: [
+      { tool: 'issue_refund', field: 'amountUsd', condition: { gt: 100 },
+        action: 'deny', severity: 'high', reason: 'refunds over $100 need a human' },
+    ],
+    createdAt: Date.now(),
+  },
+  config: DriftWatchConfigSchema.parse({}),
+});
+
+const tools = {
+  issue_refund: tool({
+    description: 'Issue a refund for an order',
+    inputSchema: z.object({ orderId: z.string(), amountUsd: z.number() }),
+    // One name, used for both the telemetry span and policy matching.
+    execute: runtime.skill('issue_refund', async ({ orderId, amountUsd }) => ({
+      refunded: true, orderId, amountUsd,
+    })),
+  }),
+};
+
+const result = await runtime.run({ prompt: 'Refund order A-4471 in full.', modelClient, tools });
+```
+
+`runtime.run()` resolves the agent's guardrails and `maxSteps` and attaches its
+`agent_id` to every span and metric. `runtime.skill()` adds the telemetry span
+and the policy gate. A deny-only policy needs no store and no notifiers at all.
+
+<Callout title="Static agent, or live one?">
+  `agent` takes either a definition or a function returning one:
+
+  ```ts
+  createAgentRuntime({ agent: myDefinition })                        // static
+  createAgentRuntime({ agent: () => store.getAgentDefinition(id) })  // live
+  ```
+
+  A snapshot is right for an agent whose config is fixed at startup — no store,
+  no per-run I/O. A function is re-resolved on every run, so a control-plane
+  edit applies to the very next call. The choice is explicit at the call site
+  rather than inferred, so an API that looks live can't silently be frozen.
+</Callout>
 
 ## Instrument your own tools
 
@@ -334,14 +418,17 @@ use **cumulative** temporality (the OTel default), which is what PromQL's
 [Prometheus guide](/docs/prometheus#what-driftwatch-emits) lists every signal
 it produces.
 
-In production, compile `telemetry.ts` and preload it with `node` the same way:
+In production, the same preload works against your compiled output:
 
 ```bash
-node --import ./dist/telemetry.js ./dist/app.js
+node --env-file=.env --import @driftwatch/sdk/preload ./dist/app.js
 ```
 
-<Callout type="warn" title="Import order matters">
-  Call `bootstrapTelemetry` before your other imports, in its own file, loaded
-  with `--import`. If you call it later — from inside your normal import graph —
-  the instruments bind before the provider is ready and record nothing.
+<Callout title="Import order, precisely">
+  Prefer the preload. If you bootstrap from inside your normal import graph
+  instead, DriftWatch's own spans and metrics still work (the tracer is a proxy
+  that upgrades, and the metric instruments bind lazily), and so do `fetch`
+  HTTP spans (`diagnostics_channel`-based). What you lose is import-time-patched
+  instrumentation — **pino, Fastify, database drivers** — because ESM has
+  already evaluated those modules before your first line of body code runs.
 </Callout>

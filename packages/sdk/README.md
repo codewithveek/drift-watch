@@ -8,42 +8,35 @@ drift detector. Zero AI provider SDKs bundled, every function takes typed config
 
 ```bash
 npm install @driftwatch/sdk ai zod
-# plus exactly one AI SDK provider package for your chosen model.
-# The reference deployment targets Qwen Cloud (OpenAI-compatible), so:
+# plus exactly one AI SDK provider package for your chosen model, e.g.
 npm install @ai-sdk/openai
 ```
+
+Requires Node ≥ 22.
 
 This SDK bundles **no** provider SDKs and never picks a provider from an env
 var — you construct a model client with your provider package and pass it in.
 Anthropic, Google, Mistral, Ollama, vLLM, Together, Groq, DeepSeek, or any
-OpenAI-compatible endpoint all work the same way; swap the two lines that build
+OpenAI-compatible endpoint all work the same way; swap the line that builds
 `modelClient` below.
 
 ## Quickstart
 
-```ts
-import {
-  runAgentTask,
-  detectBehavioralDrift,
-  bootstrapTelemetry,
-  loadDriftWatchConfigFromEnv,
-} from '@driftwatch/sdk';
-import { createOpenAI } from '@ai-sdk/openai';
+Start telemetry with the bundled preload — no file of your own, and it runs
+before your app's imports are evaluated (which is the only way OpenTelemetry
+can patch pino/Fastify/database drivers in time):
+
+```bash
+node --env-file=.env --import @driftwatch/sdk/preload app.js
+```
+
+```ts title="app.js"
+import { runAgentTask, detectBehavioralDrift, loadDriftWatchConfigFromEnv } from '@driftwatch/sdk';
+import { openai } from '@ai-sdk/openai';
 import { tool } from 'ai';
 import { z } from 'zod';
 
-const config = loadDriftWatchConfigFromEnv();
-bootstrapTelemetry(config.telemetry); // call before other imports run, e.g. via --import
-
-// This deployment targets Qwen Cloud's OpenAI-compatible endpoint.
-// Credentials come from the environment, never hardcoded.
-const qwenCloud = createOpenAI({
-  baseURL:
-    process.env.QWEN_BASE_URL ??
-    'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
-  apiKey: process.env.QWEN_API_KEY ?? '',
-});
-const modelClient = qwenCloud(process.env.MODEL ?? 'glm-5.2');
+const config = loadDriftWatchConfigFromEnv(); // every field has a default
 
 const tools = {
   lookup_order: tool({
@@ -55,33 +48,62 @@ const tools = {
 
 const result = await runAgentTask({
   prompt: 'Where is order 4471?',
-  modelClient,
+  modelClient: openai('gpt-4o-mini'), // any AI SDK provider client
   tools,
   maxSteps: config.agent.maxSteps,
   // Inline guardrails (Loop 1): abort/flag a single run the moment it crosses
-  // a per-task token or cost cap. config.agent already carries these fields.
-  guardrails: {
-    maxTokensPerTask: config.agent.maxTokensPerTask, // 0 disables the check
-    maxCostUsd: config.agent.maxCostUsd,             // 0 disables the check
-    pricePer1kInput: config.agent.pricePer1kInput,
-    pricePer1kOutput: config.agent.pricePer1kOutput,
-    onExceed: config.agent.onExceed,                 // 'stop' halts mid-loop, 'flag' finishes and marks it
-  },
+  // a per-task token or cost cap. 0 disables a given check.
+  guardrails: toAgentGuardrails(config.agent),
 });
 console.log(result.responseText, result.tokenUsage);
 if (result.guardrailTriggered) {
   console.warn('guardrail hit:', result.guardrailReason);
 }
 
-// Loop 2: LLM-over-traces drift detection. Use isDryRun for a fixture-backed
-// run before you've generated real traffic (demos / CI); metricsQuerySource
+// Loop 2: LLM-over-traces drift detection. isDryRun uses built-in fixtures, so
+// this works before any real traffic exists (demos / CI); metricsQuerySource
 // is required unless isDryRun is true.
-const driftReport = await detectBehavioralDrift({
-  modelClient,
-  isDryRun: true,
-});
+const driftReport = await detectBehavioralDrift({ modelClient: openai('gpt-4o-mini'), isDryRun: true });
 console.log(driftReport.verdict, `(judge attempts: ${driftReport.judgeAttempts})`);
 ```
+
+### Per-agent guardrails and tool-call policies
+
+For an agent with its own caps and pre-execution tool gating, `createAgentRuntime`
+binds the context once instead of threading it through every call:
+
+```ts
+import { createAgentRuntime, DriftWatchConfigSchema, generateAgentSlug } from '@driftwatch/sdk';
+
+const runtime = createAgentRuntime({
+  agent: {
+    id: generateAgentSlug('Support Agent'),
+    name: 'Support Agent',
+    guardrails: { maxTokensPerTask: 20_000 },
+    toolPolicies: [
+      { tool: 'issue_refund', field: 'amountUsd', condition: { gt: 100 },
+        action: 'deny', severity: 'high', reason: 'refunds over $100 need a human' },
+    ],
+    createdAt: Date.now(),
+  },
+  config: DriftWatchConfigSchema.parse({}),
+});
+
+const gatedTools = {
+  issue_refund: tool({
+    description: 'Issue a refund for an order',
+    inputSchema: z.object({ orderId: z.string(), amountUsd: z.number() }),
+    execute: runtime.skill('issue_refund', async (input) => ({ refunded: true, ...input })),
+  }),
+};
+
+await runtime.run({ prompt: 'Refund order A-4471 in full.', modelClient: openai('gpt-4o-mini'), tools: gatedTools });
+```
+
+A denied call throws inside the tool, which the AI SDK surfaces to the model as
+a tool error — so the agent can adapt (escalate, explain, try something else)
+instead of the run failing. A `deny`-only policy needs no store and no
+notifiers; only `require_approval` does.
 
 ### Configuration
 

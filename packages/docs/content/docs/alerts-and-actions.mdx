@@ -185,14 +185,16 @@ model to a cheaper one, and watch spend drop in the same dashboard.
 **Setup.** Register the target model and point a policy at it:
 
 ```bash
-MODEL=glm-5.2                 # primary
-MODEL_FALLBACK=glm-5.2          # registers glm-5.2 + becomes the switch target
+MODEL=qwen3.6-plus            # primary
+MODEL_FALLBACK=qwen3.6-turbo  # the cheaper model to downshift to; becomes the switch target
 AUTOPILOT_ENABLED=1
 AUTOPILOT_MODE=enforce
 AUTOPILOT_POLICIES='[{"when":{"tokenSpendDeltaPct":100},"do":["notify_slack","switch_model"]}]'
 ```
 
-Add more models by editing `model-client.ts`'s registry; set
+`MODEL_FALLBACK` must differ from `MODEL` — a fallback identical to the primary
+is skipped when the registry is built, which would make `switch_model` a silent
+no-op. Add more models by editing `model-client.ts`'s registry; set
 `AUTOPILOT_SWITCH_MODEL_TO` to choose which one `switch_model` targets (defaults
 to `MODEL_FALLBACK`).
 

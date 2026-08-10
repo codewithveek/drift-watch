@@ -27,7 +27,9 @@
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "sideEffects": false,
+  "sideEffects": [
+    "./dist/preload.js"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -36,6 +38,10 @@
     "./redis": {
       "types": "./dist/redis.d.ts",
       "import": "./dist/redis.js"
+    },
+    "./preload": {
+      "types": "./dist/preload.d.ts",
+      "import": "./dist/preload.js"
     }
   },
   "files": [

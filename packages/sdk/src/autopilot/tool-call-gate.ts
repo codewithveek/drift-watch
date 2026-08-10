@@ -35,16 +35,27 @@ import { notifyAll, type DispatchLogger, type NotifierRegistry } from './notify-
 import { isCapturePayloadsEnabled } from '../telemetry/capture-config.js';
 
 const DEFAULT_POLL_INTERVAL_MS = 500;
+const DEFAULT_APPROVAL_TIMEOUT_MS = 120_000;
 
 export interface GateToolCallOptions {
   tool: string;
   input: unknown;
   agentId: string;
   rules: ToolCallPolicyRule[];
-  store: StateStore;
-  notifiers: NotifierRegistry;
-  approvalTimeoutMs: number;
-  timeoutDecision: 'approved' | 'rejected';
+  /**
+   * Only needed when a `require_approval` rule can actually fire — `allow`
+   * and `deny` verdicts never touch it. A deny-only policy therefore needs no
+   * store, no notifiers, and no approval config at all. If a
+   * `require_approval` rule matches without these, that's a misconfiguration
+   * and the call fails closed (denied) with an explanatory reason rather than
+   * silently proceeding.
+   */
+  store?: StateStore;
+  notifiers?: NotifierRegistry;
+  /** Defaults to 120s. Only consulted for `require_approval`. */
+  approvalTimeoutMs?: number;
+  /** Defaults to 'rejected' (fail closed). Only consulted for `require_approval`. */
+  timeoutDecision?: 'approved' | 'rejected';
   pollIntervalMs?: number;
   abortSignal?: AbortSignal;
   logger?: DispatchLogger;
@@ -64,8 +75,8 @@ export async function gateToolCall(options: GateToolCallOptions): Promise<GateTo
     rules,
     store,
     notifiers,
-    approvalTimeoutMs,
-    timeoutDecision,
+    approvalTimeoutMs = DEFAULT_APPROVAL_TIMEOUT_MS,
+    timeoutDecision = 'rejected',
     pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
     abortSignal,
     logger,
@@ -80,7 +91,20 @@ export async function gateToolCall(options: GateToolCallOptions): Promise<GateTo
     return { allowed: false, reason: verdict.matchedRule?.reason ?? `tool call denied by policy: ${tool}` };
   }
 
-  // require_approval
+  // require_approval — the only branch that needs any infrastructure.
+  // Without a store there is nowhere to record the pending decision and
+  // nothing for a human to resolve, so the only safe answer is to deny.
+  // Failing closed here rather than throwing keeps this consistent with every
+  // other denial: the model sees a tool error it can react to, not a crash.
+  if (!store) {
+    return {
+      allowed: false,
+      reason:
+        `tool call requires approval but no StateStore was provided to gateToolCall ` +
+        `(agent ${agentId}, tool ${tool}) — denying`,
+    };
+  }
+
   const now = Date.now();
   const approval: ToolCallApproval = {
     id: randomUUID(),
@@ -102,17 +126,21 @@ export async function gateToolCall(options: GateToolCallOptions): Promise<GateTo
   const agentDefinition = await store.getAgentDefinition(agentId);
   const agentLabel = agentDefinition?.name ?? agentId;
   const fieldSuffix = approval.fieldPath ? ` (field: ${approval.fieldPath})` : '';
-  await notifyAll(
-    notifiers,
-    {
-      title: `Tool-call approval needed: ${tool}${fieldSuffix} (${agentLabel})`,
-      severity: verdict.matchedRule?.severity ?? 'medium',
-      reasons: approval.matchedReason ? [approval.matchedReason] : [],
-      recommendedAction: `Approve or reject this ${tool} call before it executes`,
-      approvalId: approval.id,
-    },
-    logger,
-  );
+  // No notifiers is legitimate, not an error: the approval is still recorded
+  // and resolvable through the control-plane API / console.
+  if (notifiers) {
+    await notifyAll(
+      notifiers,
+      {
+        title: `Tool-call approval needed: ${tool}${fieldSuffix} (${agentLabel})`,
+        severity: verdict.matchedRule?.severity ?? 'medium',
+        reasons: approval.matchedReason ? [approval.matchedReason] : [],
+        recommendedAction: `Approve or reject this ${tool} call before it executes`,
+        approvalId: approval.id,
+      },
+      logger,
+    );
+  }
 
   const deadline = now + approvalTimeoutMs;
   while (Date.now() < deadline) {

@@ -33,7 +33,7 @@ services:
       # --- model client (Qwen Cloud, OpenAI-compatible) ---
       QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
       QWEN_API_KEY: ${QWEN_API_KEY:-}
-      MODEL: ${MODEL:-glm-5.2}
+      MODEL: ${MODEL:-qwen3.6-plus}
       AUTH_TOKEN: ${AUTH_TOKEN:-}
       # --- shared state (multi-process): point autopilot at the Redis above ---
       REDIS_URL: redis://redis:6379

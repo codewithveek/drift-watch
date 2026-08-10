@@ -215,6 +215,56 @@ describe('gateToolCall', () => {
     expect(result).toEqual({ allowed: true });
   });
 
+  it('a deny-only policy needs no store and no notifiers at all', async () => {
+    const result = await gateToolCall({
+      tool: 'refund_payment',
+      input: { amount: 50000 },
+      agentId: 'agent-1',
+      rules: [rule({ tool: 'refund_payment', action: 'deny', reason: 'never auto-refund' })],
+      // no store, no notifiers, no approval config
+    });
+    expect(result).toEqual({ allowed: false, reason: 'never auto-refund' });
+  });
+
+  it('an allow verdict needs no infrastructure either', async () => {
+    const result = await gateToolCall({
+      tool: 'get_weather',
+      input: {},
+      agentId: 'agent-1',
+      rules: [rule({ tool: 'refund_payment', action: 'deny' })],
+    });
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it('fails CLOSED when require_approval fires but no store was provided', async () => {
+    const result = await gateToolCall({
+      tool: 'refund_payment',
+      input: {},
+      agentId: 'agent-1',
+      rules: [rule({ tool: 'refund_payment', action: 'require_approval' })],
+    });
+    expect(result.allowed).toBe(false);
+    expect((result as { reason: string }).reason).toContain('no StateStore');
+  });
+
+  it('works with a store but no notifiers — the approval is still recorded and resolvable', async () => {
+    const store = fakeStore();
+    const gatePromise = gateToolCall({
+      tool: 'refund_payment',
+      input: {},
+      agentId: 'agent-1',
+      rules: [rule({ tool: 'refund_payment', action: 'require_approval' })],
+      store,
+      approvalTimeoutMs: 5000,
+      pollIntervalMs: 10,
+    });
+
+    await vi.waitFor(() => expect(store.approvals.size).toBe(1));
+    const [id] = store.approvals.keys();
+    await store.resolveToolCallApproval(id, 'approved', 'console', 'console');
+    expect(await gatePromise).toEqual({ allowed: true });
+  });
+
   it('returns promptly and denies when the abortSignal is already aborted', async () => {
     const store = fakeStore();
     const controller = new AbortController();

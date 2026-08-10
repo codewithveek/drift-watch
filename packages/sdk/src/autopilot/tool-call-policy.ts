@@ -28,8 +28,17 @@ export const ToolCallPolicyRuleSchema = z.object({
   tool: z.string(),
   /** Dot-path into the tool's input, e.g. 'amount' or 'customer.ssn'. Omit to gate the whole tool regardless of input shape. */
   field: z.string().optional(),
-  /** Empty (default) = matches whenever `field` is present (or always, if `field` is omitted). */
-  condition: ToolCallConditionSchema.default({}),
+  /**
+   * Omitted or empty = matches whenever `field` is present (or always, if
+   * `field` is omitted too).
+   *
+   * Deliberately `.optional()` rather than `.default({})`: a default would
+   * make this field REQUIRED in the inferred output type, so writing a
+   * whole-tool rule literal in TypeScript would be a compile error even
+   * though the identical JSON is accepted over HTTP. Optional keeps the
+   * authoring and wire shapes identical.
+   */
+  condition: ToolCallConditionSchema.optional(),
   action: z.enum(['deny', 'require_approval']),
   /** Drives notification severity/UI treatment — reuses the same scale as drift verdicts. */
   severity: z.enum(['none', 'low', 'medium', 'high']),
@@ -72,8 +81,8 @@ function conditionIsEmpty(condition: ToolCallCondition): boolean {
   );
 }
 
-function conditionMatches(condition: ToolCallCondition, value: unknown): boolean {
-  if (conditionIsEmpty(condition)) return value !== undefined;
+function conditionMatches(condition: ToolCallCondition | undefined, value: unknown): boolean {
+  if (!condition || conditionIsEmpty(condition)) return value !== undefined;
   if (condition.exists !== undefined) {
     return condition.exists ? value !== undefined && value !== null : value === undefined || value === null;
   }

@@ -1,9 +1,10 @@
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
 import {
+  createAgentRuntime,
   runAgentTask,
   detectBehavioralDrift,
   resolveAgentConfig,
-  resolveToolCallPolicies,
+  toAgentGuardrails,
   type ModelClient,
   type DriftWatchConfig,
   type StateStore,
@@ -73,44 +74,32 @@ export async function registerRoutes(
       : undefined;
     const resolvedConfig = resolveAgentConfig(agent, driftWatchConfig, sourceAgent);
 
-    // Reuse the already-fetched sourceAgent when both reference fields point
-    // at the same agent — guardrailsSource and toolPoliciesSource are
-    // deliberately independent (different axes a deployer may compose
-    // differently), so they aren't assumed to match.
-    const sourceAgentForTools =
-      agent.toolPoliciesSource === agent.guardrailsSource
-        ? sourceAgent
-        : agent.toolPoliciesSource
-          ? await store.getAgentDefinition(agent.toolPoliciesSource)
-          : undefined;
-    const toolPolicies = resolveToolCallPolicies(agent, sourceAgentForTools);
+    // The runtime is used here ONLY to wrap tools with this agent's span +
+    // policy gate (see buildAgentTools). The run itself deliberately stays on
+    // `runAgentTask` rather than `runtime.run()`: this file has concerns the
+    // facade shouldn't absorb — 404-on-unknown-agent, model switching, and
+    // the dual guardrailsSource/toolPoliciesSource lookups — and keeping the
+    // primitive path here means it stays exercised by real code instead of
+    // rotting behind the convenience layer.
+    //
+    // A resolver (not a snapshot) so tool policies are re-read from the store
+    // on every call — that's what makes a control-plane PATCH apply to the
+    // very next run with no restart and no cache to invalidate.
+    const runtime = createAgentRuntime({
+      agent: async () => (await store.getAgentDefinition(agentId)) ?? agent,
+      config: driftWatchConfig,
+      store,
+      notifiers,
+      approvalTimeoutMs: toolCallApprovalTimeoutMs,
+      timeoutDecision: toolCallApprovalTimeoutDecision,
+    });
 
     return runAgentTask({
       prompt,
       modelClient: await resolveAgentModel(agentId),
-      tools: buildAgentTools({
-        toolNames: agent.toolNames,
-        agentId,
-        serviceName: agent.serviceName,
-        policyGateContext:
-          toolPolicies.length > 0
-            ? {
-                toolPolicies,
-                store,
-                notifiers,
-                approvalTimeoutMs: toolCallApprovalTimeoutMs,
-                timeoutDecision: toolCallApprovalTimeoutDecision,
-              }
-            : undefined,
-      }),
+      tools: buildAgentTools({ runtime, toolNames: agent.toolNames }),
       maxSteps: resolvedConfig.maxSteps,
-      guardrails: {
-        maxTokensPerTask: resolvedConfig.maxTokensPerTask,
-        maxCostUsd: resolvedConfig.maxCostUsd,
-        pricePer1kInput: resolvedConfig.pricePer1kInput,
-        pricePer1kOutput: resolvedConfig.pricePer1kOutput,
-        onExceed: resolvedConfig.onExceed,
-      },
+      guardrails: toAgentGuardrails(resolvedConfig),
       agentId,
       serviceName: agent.serviceName,
     });

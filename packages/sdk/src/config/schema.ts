@@ -86,6 +86,19 @@ export function resolveAgentConfig(
   };
 }
 
+/**
+ * Narrows a resolved `AgentConfig` to just the inline-guardrail fields
+ * `runAgentTask` takes. Purely mechanical — `AgentConfig` is `AgentGuardrails`
+ * plus `maxSteps` — but worth existing so callers don't hand-spread five
+ * fields at every call site (and quietly drop one when a field is added).
+ * Returns a plain object rather than the guardrails type itself to avoid a
+ * `config/` -> `agent/` import.
+ */
+export function toAgentGuardrails(agentConfig: AgentConfig): Omit<AgentConfig, 'maxSteps'> {
+  const { maxSteps: _maxSteps, ...guardrails } = agentConfig;
+  return guardrails;
+}
+
 export const DriftDetectionConfigSchema = z.object({
   /**
    * Base URL of the Prometheus-compatible query API used by the built-in
