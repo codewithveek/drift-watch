@@ -7,11 +7,11 @@ import { existsSync } from 'node:fs';
 import 'dotenv/config';
 import Fastify from 'fastify';
 import rateLimit from '@fastify/rate-limit';
-import fastifyStatic from '@fastify/static';
 import { assertModelClientIsConfigured, loadDriftWatchConfigFromEnv } from '@driftwatch/sdk';
 import { registerRoutes } from './routes/agent.js';
 import { registerConsoleRoutes } from './routes/console.js';
 import { registerIntegrationRoutes } from './routes/integrations.js';
+import { registerConsoleStatic } from './routes/static-console.js';
 import { loadServerConfigFromEnv } from './config/server-config.js';
 import { modelClient, modelRegistry } from './config/model-client.js';
 import { createAutopilot } from './autopilot/index.js';
@@ -71,11 +71,7 @@ const consoleDistDir = join(
   '../../console/dist',
 );
 if (existsSync(consoleDistDir)) {
-  await fastifyServer.register(fastifyStatic, {
-    root: consoleDistDir,
-  prefix: '/console',
-    redirect: true,
-  });
+  await registerConsoleStatic(fastifyServer, { consoleDistDir });
 }
 
 try {

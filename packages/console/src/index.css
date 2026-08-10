@@ -1,4 +1,15 @@
 @import 'tailwindcss';
+@import 'tw-animate-css';
+
+/*
+ * shadcn/ui components ship hardcoded `dark:` utilities (dark:bg-input/30,
+ * dark:border-input) which the upstream registry gates on a `.dark` ancestor.
+ * This console is dark-only via @theme and has no such class, so without this
+ * every one of those utilities would be silently inert and the components
+ * would render subtly wrong. index.html carries class="dark"; the :root and
+ * .dark blocks below deliberately hold identical values.
+ */
+@custom-variant dark (&:is(.dark *));
 
 /*
  * DriftWatch console design tokens.
@@ -18,10 +29,16 @@
   --color-ink-2: oklch(0.806 0.012 256); /* secondary text / body */
   --color-ink-3: oklch(0.668 0.014 256); /* muted labels */
 
-  /* Brand accent — sky. Deep for fills, bright for text/icons/focus on dark. */
-  --color-accent: oklch(0.585 0.152 250); /* button / active fill */
-  --color-accent-hover: oklch(0.648 0.152 250);
-  --color-accent-bright: oklch(0.760 0.128 248); /* links, icons, focus ring */
+  /*
+   * Brand — sky. Deep for fills, bright for text/icons/focus on dark.
+   * Named `brand`, NOT `accent`: shadcn/ui owns `accent` in its component
+   * vocabulary, where it means a subtle raised hover surface. Sharing the name
+   * would make every shadcn hover state a saturated sky fill (and would have
+   * silently turned this product's own brand fills grey).
+   */
+  --color-brand: oklch(0.585 0.152 250); /* button / active fill */
+  --color-brand-hover: oklch(0.648 0.152 250);
+  --color-brand-bright: oklch(0.760 0.128 248); /* links, icons, focus ring */
 
   /* Semantic status — fills/dots + a brighter text tone for dark tints. */
   --color-ok: oklch(0.735 0.150 158);
@@ -40,6 +57,124 @@
 
   /* Motion */
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /*
+   * Type scale — fixed rem, ~1.125 ratio. Deliberately NOT fluid/clamp():
+   * this is product UI viewed at consistent DPI, where a heading that shrinks
+   * inside a sidebar looks worse, not better. The tight ratio keeps the many
+   * type elements on a dense ops surface from reading as noise. One family
+   * (the system stack below) in multiple weights — no display/body pairing.
+   */
+  --text-2xs: 0.6875rem;   /* 11px — dense table meta, timestamps */
+  --text-2xs--line-height: 1rem;
+  --text-xs: 0.75rem;      /* 12px — labels, badges */
+  --text-xs--line-height: 1.125rem;
+  --text-sm: 0.8125rem;    /* 13px — secondary body, table cells */
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.9375rem;  /* 15px — body */
+  --text-base--line-height: 1.5rem;
+  --text-lg: 1.0625rem;    /* 17px — card titles */
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.1875rem;    /* 19px — page titles */
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.5rem;      /* 24px — the ceiling; this is a tool, not a page */
+  --text-2xl--line-height: 2rem;
+
+  /* Tabular figures for metrics/timestamps so columns don't jitter as they poll. */
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  /*
+   * Radius. shadcn derives its own -sm/-md/-lg/-xl from --radius (see the
+   * bridge below); these are the values behind them.
+   */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+
+  /*
+   * Elevation. A flat dark surface: depth comes from the panel ramp, not from
+   * heavy shadows. Two steps is all this needs — one for resting raised
+   * surfaces, one for things that float above the page.
+   */
+  --shadow-raised: 0 1px 2px oklch(0 0 0 / 0.3);
+  --shadow-overlay:
+    0 8px 24px -4px oklch(0 0 0 / 0.45), 0 2px 8px -2px oklch(0 0 0 / 0.3);
+}
+
+/*
+ * ── shadcn/ui bridge ──────────────────────────────────────────────────────
+ * shadcn components are written against a fixed vocabulary (--background,
+ * --primary, --muted, --ring, …). Mapping those onto the DriftWatch tokens
+ * above means every generated component inherits this product's identity
+ * instead of importing a generic slate palette — and upstream `shadcn add`
+ * diffs stay clean because we never edit the components themselves.
+ *
+ * These live as plain custom properties, re-exposed through `@theme inline`
+ * below. `inline` matters: it defers resolution to the use site, which is what
+ * keeps opacity modifiers like `ring-ring/50` working. A plain @theme would
+ * break them.
+ *
+ * :root and .dark are identical on purpose — see the @custom-variant note at
+ * the top. This console is dark-only; the class exists so shadcn's built-in
+ * `dark:` utilities are live rather than dead.
+ */
+:root,
+.dark {
+  --background: var(--color-canvas);
+  --foreground: var(--color-ink);
+
+  --card: var(--color-panel);
+  --card-foreground: var(--color-ink);
+  --popover: var(--color-panel);
+  --popover-foreground: var(--color-ink);
+
+  /* Accent fill is dark enough that white text on it clears 4.5:1. */
+  --primary: var(--color-brand);
+  --primary-foreground: oklch(1 0 0);
+
+  --secondary: var(--color-panel-2);
+  --secondary-foreground: var(--color-ink);
+
+  /* `muted` = a raised surface; `muted-foreground` = the muted INK ramp. */
+  --muted: var(--color-panel-2);
+  --muted-foreground: var(--color-ink-3);
+
+  --accent: var(--color-panel-2);
+  --accent-foreground: var(--color-ink);
+
+  --destructive: var(--color-danger);
+  --destructive-foreground: oklch(1 0 0);
+
+  --border: var(--color-line);
+  --input: var(--color-line-2);
+  /* Matches the global :focus-visible outline, so focus reads identically
+     whether it comes from a shadcn ring or the base outline rule. */
+  --ring: var(--color-brand-bright);
+
+  --radius: var(--radius-md);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
 }
 
 @layer base {
@@ -50,7 +185,7 @@
     /* Faint accent wash at the top — depth, not decoration. */
     background-image: radial-gradient(
       120% 60% at 50% -10%,
-      color-mix(in oklch, var(--color-accent) 12%, transparent),
+      color-mix(in oklch, var(--color-brand) 12%, transparent),
       transparent 60%
     );
     background-attachment: fixed;
@@ -63,7 +198,7 @@
 
   /* One consistent focus treatment across every interactive element. */
   :focus-visible {
-    outline: 2px solid var(--color-accent-bright);
+    outline: 2px solid var(--color-brand-bright);
     outline-offset: 2px;
   }
 

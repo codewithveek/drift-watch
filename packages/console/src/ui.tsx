@@ -129,10 +129,10 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 const BUTTON_BASE =
   'inline-flex items-center justify-center gap-1.5 rounded-lg font-medium whitespace-nowrap ' +
   'transition-colors duration-150 disabled:pointer-events-none disabled:opacity-45 ' +
-  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-bright';
+  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-bright';
 
 const BUTTON_VARIANT = {
-  primary: 'bg-accent text-white hover:bg-accent-hover shadow-sm shadow-black/20',
+  primary: 'bg-brand text-white hover:bg-brand-hover shadow-sm shadow-black/20',
   default: 'bg-panel-2 text-ink-2 ring-1 ring-inset ring-line hover:bg-line hover:text-ink',
   ghost: 'text-ink-2 hover:bg-panel-2 hover:text-ink',
   danger: 'text-danger-text ring-1 ring-inset ring-danger/35 hover:bg-danger/15',
@@ -179,7 +179,7 @@ export function IconButton({
       type="button"
       aria-label={label}
       title={label}
-      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-ink-2 transition-colors hover:bg-panel-2 hover:text-ink disabled:pointer-events-none disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-bright"
+      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-ink-2 transition-colors hover:bg-panel-2 hover:text-ink disabled:pointer-events-none disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-bright"
       {...props}
     >
       {children}

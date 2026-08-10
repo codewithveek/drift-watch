@@ -1,8 +1,16 @@
 <!doctype html>
-<html lang="en">
+<!--
+  class="dark" is load-bearing, not cosmetic: shadcn/ui components ship
+  hardcoded `dark:` utilities gated on a `.dark` ancestor (see the
+  @custom-variant in src/index.css). Without it those utilities never apply and
+  the components render subtly wrong. This console is dark-only, so the class is
+  static rather than toggled.
+-->
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
     <title>DriftWatch Autopilot</title>
   </head>
   <body>

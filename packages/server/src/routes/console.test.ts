@@ -338,6 +338,52 @@ describe('PATCH /agents/:agentId', () => {
   });
 });
 
+/*
+ * The console mirrors these envelope shapes in packages/console/src/api.ts.
+ * Entity types come from @driftwatch/sdk and cannot drift, but the wrappers
+ * exist only inline in this file — these tests are what stop them drifting
+ * silently the way the old hand-copied console types did.
+ */
+describe('response envelope shapes (pinned for packages/console/src/api.ts)', () => {
+  it('GET /agents/:agentId/state returns exactly the documented keys', async () => {
+    const { fastify, store } = await buildApp();
+    await store.upsertAgent({ id: 'agent-1', name: 'Agent One', createdAt: 1 });
+
+    const body = (await fastify.inject({ method: 'GET', url: '/agents/agent-1/state' })).json();
+    expect(Object.keys(body).sort()).toEqual([
+      'agent',
+      'autopilot',
+      'guardrails',
+      'toolNames',
+      'toolPolicies',
+    ]);
+    expect(Object.keys(body.autopilot).sort()).toEqual(['enabled', 'mode', 'scanIntervalMs']);
+    // The full resolved AgentConfig — the old console type carried only 3 of these 6.
+    expect(Object.keys(body.guardrails).sort()).toEqual([
+      'maxCostUsd',
+      'maxSteps',
+      'maxTokensPerTask',
+      'onExceed',
+      'pricePer1kInput',
+      'pricePer1kOutput',
+    ]);
+  });
+
+  it('list endpoints use the wrapper keys the console expects', async () => {
+    const { fastify, store } = await buildApp();
+    await store.upsertAgent({ id: 'agent-1', name: 'Agent One', createdAt: 1 });
+
+    const at = async (url: string) => Object.keys((await fastify.inject({ method: 'GET', url })).json());
+    expect(await at('/agents')).toEqual(['agents']);
+    expect(await at('/tools')).toEqual(['tools']);
+    expect(await at('/agents/agent-1')).toEqual(['agent']);
+    expect(await at('/agents/agent-1/approvals')).toEqual(['approvals']);
+    expect(await at('/agents/agent-1/drift/history')).toEqual(['history']);
+    expect(await at('/agents/agent-1/actions/log')).toEqual(['log']);
+    expect(await at('/agents/agent-1/tool-calls/pending')).toEqual(['toolCalls']);
+  });
+});
+
 describe('tool-call approvals', () => {
   it('GET /agents/:agentId/tool-calls/pending lists only pending ones for that agent', async () => {
     const { fastify, store } = await buildApp();

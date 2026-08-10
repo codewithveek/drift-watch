@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -17,6 +18,13 @@ const API_PATHS = [
 export default defineConfig({
   base: '/console/',
   plugins: [react(), tailwindcss()],
+  resolve: {
+    // Must mirror tsconfig.json's `paths` — that only satisfies tsc, not the
+    // bundler. shadcn-generated components import via `@/`.
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
   server: {
     port: 5173,
     proxy: Object.fromEntries(

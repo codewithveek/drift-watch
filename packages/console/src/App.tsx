@@ -224,7 +224,7 @@ function TopBar({
       <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
         <div className="flex items-center gap-2.5">
           <span
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/15 text-accent-bright ring-1 ring-inset ring-accent/25"
+            className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand/15 text-brand-bright ring-1 ring-inset ring-brand/25"
             aria-hidden="true"
           >
             <Icons.Pulse width={18} height={18} />
@@ -288,7 +288,7 @@ function SyncIndicator({
       title="Live data refreshes every few seconds"
     >
       {refreshing ? (
-        <Spinner className="text-accent-bright" />
+        <Spinner className="text-brand-bright" />
       ) : (
         <span className="h-1.5 w-1.5 rounded-full bg-ok" aria-hidden="true" />
       )}
@@ -328,7 +328,7 @@ function ConnectionButton({ token, onSaveToken }: { token: string; onSaveToken: 
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-panel px-2.5 text-sm font-medium text-ink-2 ring-1 ring-inset ring-line transition-colors hover:bg-panel-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-bright"
+        className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-panel px-2.5 text-sm font-medium text-ink-2 ring-1 ring-inset ring-line transition-colors hover:bg-panel-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-bright"
         aria-haspopup="dialog"
         aria-expanded={open}
       >
@@ -358,7 +358,7 @@ function ConnectionButton({ token, onSaveToken }: { token: string; onSaveToken: 
                 setOpen(false);
               }
             }}
-            className="w-full rounded-lg border border-line bg-canvas px-3 py-2 text-sm text-ink placeholder:text-ink-3 outline-none transition-colors focus:border-accent"
+            className="w-full rounded-lg border border-line bg-canvas px-3 py-2 text-sm text-ink placeholder:text-ink-3 outline-none transition-colors focus:border-brand"
           />
           <p className="mt-1.5 text-xs text-ink-3">Stored locally; sent as a bearer header with each request.</p>
           <div className="mt-2.5 flex justify-end gap-2">
@@ -395,7 +395,7 @@ function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () =>
       <button
         onClick={onDismiss}
         aria-label="Dismiss error"
-        className="-m-1 rounded p-1 text-danger-text/70 transition-colors hover:text-danger-text focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent-bright"
+        className="-m-1 rounded p-1 text-danger-text/70 transition-colors hover:text-danger-text focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand-bright"
       >
         <Icons.X width={15} height={15} />
       </button>
@@ -561,7 +561,7 @@ function ApprovalsQueue({
       icon={<Icons.Inbox />}
       action={
         approvals.length > 0 ? (
-          <span className="rounded-md bg-accent/15 px-2 py-0.5 text-xs font-semibold tabular-nums text-accent-bright ring-1 ring-inset ring-accent/25">
+          <span className="rounded-md bg-brand/15 px-2 py-0.5 text-xs font-semibold tabular-nums text-brand-bright ring-1 ring-inset ring-brand/25">
             {approvals.length}
           </span>
         ) : undefined

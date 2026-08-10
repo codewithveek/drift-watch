@@ -9,6 +9,14 @@
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
+    /*
+     * Non-negotiable while @driftwatch/sdk is a dependency: its entry point
+     * pulls in OpenTelemetry, ioredis and node builtins. This makes an
+     * accidental value import (`import { ACTION_TYPES }` rather than
+     * `import type`) a compile error instead of megabytes of Node-only code
+     * silently shipped into the browser bundle.
+     */
+    "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "noEmit": true,
     "jsx": "react-jsx",
@@ -16,7 +24,17 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    /*
+     * shadcn components are generated with extensionless `@/components/ui/...`
+     * imports, so this alias is a prerequisite for using them at all. It must
+     * be mirrored in vite.config.ts's resolve.alias — tsconfig paths only
+     * satisfy the type checker, not the bundler.
+     */
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
   "include": ["src", "vite.config.ts"]
 }
