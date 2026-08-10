@@ -340,7 +340,7 @@ function ConnectionButton({ token, onSaveToken }: { token: string; onSaveToken: 
         <div
           role="dialog"
           aria-label="API token"
-          className="absolute right-0 top-[calc(100%+0.5rem)] z-[var(--z-popover)] w-72 rounded-xl border border-line bg-panel p-3 shadow-xl shadow-black/40"
+          className="absolute right-0 top-[calc(100%+0.5rem)] z-[var(--z-popover)] w-72 rounded-xl border border-line bg-panel p-3 shadow-overlay"
         >
           <label htmlFor="token-input" className="mb-1.5 block text-xs font-medium text-ink-2">
             Bearer token

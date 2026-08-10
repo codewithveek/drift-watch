@@ -316,13 +316,13 @@ export function SeverityBadge({ severity }: { severity: DriftSeverity }) {
 /* ----------------------------------------------------------- status dots --- */
 
 const STATUS_COLOR: Record<AgentStatus, string> = {
-  running: 'var(--color-ok)',
-  paused: 'var(--color-danger)',
-  throttled: 'var(--color-warn)',
+  running: 'var(--ok)',
+  paused: 'var(--danger)',
+  throttled: 'var(--warn)',
 };
 
 export function StatusDot({ status, ping = false }: { status: AgentStatus; ping?: boolean }) {
-  const color = STATUS_COLOR[status] ?? 'var(--color-warn)';
+  const color = STATUS_COLOR[status] ?? 'var(--warn)';
   return (
     <span className="relative flex h-2.5 w-2.5 shrink-0" aria-hidden="true">
       {ping && status === 'running' && (

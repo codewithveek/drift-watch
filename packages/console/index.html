@@ -1,17 +1,27 @@
 <!doctype html>
 <!--
-  class="dark" is load-bearing, not cosmetic: shadcn/ui components ship
-  hardcoded `dark:` utilities gated on a `.dark` ancestor (see the
-  @custom-variant in src/index.css). Without it those utilities never apply and
-  the components render subtly wrong. This console is dark-only, so the class is
-  static rather than toggled.
+  No `class="dark"` here: light is the default theme. Adding that class to
+  <html> switches to the dark ops palette and activates shadcn/ui's built-in
+  `dark:` utilities (see the @custom-variant in src/index.css). The inline
+  script below applies a stored preference before first paint so a dark-mode
+  user never sees a white flash.
 -->
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
     <title>DriftWatch Autopilot</title>
+    <script>
+      // Deliberately inline and synchronous — running this from a module would
+      // paint the default theme first, then repaint.
+      try {
+        if (localStorage.getItem('driftwatch.theme') === 'dark') {
+          document.documentElement.classList.add('dark');
+        }
+      } catch {
+        /* private mode / storage disabled — fall back to the light default */
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
