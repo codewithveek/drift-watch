@@ -225,11 +225,27 @@ describe('GET /agents/:agentId (raw definition)', () => {
 });
 
 describe('GET /tools', () => {
-  it('returns the server tool registry', async () => {
+  it('returns the server tool registry with policy-authoring metadata', async () => {
     const { fastify } = await buildApp();
     const response = await fastify.inject({ method: 'GET', url: '/tools' });
     expect(response.statusCode).toBe(200);
-    expect(response.json().tools).toEqual(['get_weather', 'search_docs']);
+
+    const tools = response.json().tools;
+    expect(tools.map((tool: { name: string }) => tool.name)).toEqual([
+      'get_weather',
+      'search_docs',
+    ]);
+    // `fields` is what lets the console offer a field-scoped policy rule; it is
+    // derived from each Zod schema rather than hand-listed, so this also guards
+    // against the metadata describing fields the schema no longer has.
+    expect(tools[0]).toMatchObject({
+      name: 'get_weather',
+      fields: ['city'],
+      readOnly: true,
+      destructive: false,
+      idempotent: true,
+    });
+    expect(tools[1].fields).toEqual(['query']);
   });
 });
 

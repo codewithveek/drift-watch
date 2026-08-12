@@ -112,6 +112,13 @@ export const DriftDetectionConfigSchema = z.object({
 });
 export type DriftDetectionConfig = z.infer<typeof DriftDetectionConfigSchema>;
 
+/**
+ * NOTE: the nested `.default({})` calls are what make `parse({})` return a
+ * FULLY populated config — the property the whole "no configuration required"
+ * story rests on. This behaviour is zod-3 specific: under zod 4 these return
+ * empty sections instead, so the `zod@^3` pin in package.json is load-bearing,
+ * not incidental. Verified by running this package's suite against 4.x.
+ */
 export const DriftWatchConfigSchema = z.object({
   telemetry: TelemetryConfigSchema.default({}),
   agent: AgentConfigSchema.default({}),

@@ -7,12 +7,21 @@ drift detector. Zero AI provider SDKs bundled, every function takes typed config
 ## Install
 
 ```bash
-npm install @driftwatch/sdk ai zod
+npm install @driftwatch/sdk ai zod@^3
 # plus exactly one AI SDK provider package for your chosen model, e.g.
 npm install @ai-sdk/openai
 ```
 
 Requires Node ≥ 22.
+
+> **zod 3, deliberately.** This SDK pins `zod@^3`. Under zod 4 the nested
+> `.default({})` used throughout its config schemas stops populating defaults,
+> so `DriftWatchConfigSchema.parse({})` silently returns empty sections instead
+> of a fully-defaulted config — verified by running the suite against 4.x.
+> A bare `npm install zod` today resolves to 4.x, which still *works* (your
+> package manager gives the SDK its own nested zod 3), but you then have two
+> copies and cannot compose your schemas with SDK-exported ones such as
+> `ToolCallPolicyRuleSchema`. Installing `zod@^3` avoids both problems.
 
 This SDK bundles **no** provider SDKs and never picks a provider from an env
 var — you construct a model client with your provider package and pass it in.

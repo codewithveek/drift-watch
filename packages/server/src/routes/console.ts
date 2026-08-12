@@ -31,7 +31,7 @@ import {
 } from '@driftwatch/sdk';
 import type { ServerConfig } from '../config/server-config.js';
 import { isRequestAuthorized } from './auth.js';
-import { allToolNames } from '../tools.js';
+import { allToolMetadata, allToolNames } from '../tools.js';
 
 const HISTORY_LIMIT = 100;
 
@@ -252,7 +252,9 @@ export async function registerConsoleRoutes(
 
   fastifyServer.get('/tools', async (request, reply) => {
     if (!isRequestAuthorized(request, reply, authToken)) return;
-    return { tools: allToolNames };
+    // Full metadata, not just names: the console's policy editor needs each
+    // tool's matchable fields before it can offer a rule against one.
+    return { tools: allToolMetadata };
   });
 
   // --- per-agent state/history/approvals/log --------------------------------

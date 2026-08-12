@@ -1,16 +1,16 @@
 import { useState } from 'react';
 import { useParams, useRevalidator, useRouteLoaderData } from 'react-router';
-import { Save, ShieldCheck } from 'lucide-react';
-import { client, type AgentConfig, type ToolCallPolicyRule } from '@/api';
+import { Save } from 'lucide-react';
+import { client, type AgentConfig, type ToolCallPolicyRule, type ToolMetadata } from '@/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { EmptyState } from '@/components/domain';
+import { PolicyEditor } from '@/components/policy-editor';
 import type { AgentLoaderData } from './agent';
 
 export interface ConfigLoaderData {
-  allTools: string[];
+  allTools: ToolMetadata[];
 }
 
 export async function configLoader(): Promise<ConfigLoaderData> {
@@ -39,20 +39,25 @@ export function AgentConfigPage() {
     () => definition.guardrails ?? {},
   );
   const [toolNames, setToolNames] = useState<string[]>(
-    () => definition.toolNames ?? allTools,
+    () => definition.toolNames ?? allTools.map((tool) => tool.name),
+  );
+  // The agent's OWN rules, not the resolved set — editing must not silently
+  // absorb rules inherited via toolPoliciesSource and bake them in as local.
+  const [policies, setPolicies] = useState<ToolCallPolicyRule[]>(
+    () => definition.toolPolicies ?? [],
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  const policies: ToolCallPolicyRule[] = state.toolPolicies ?? [];
+  const inheritedCount = (state.toolPolicies?.length ?? 0) - policies.length;
 
   async function save() {
     setSaving(true);
     setError(null);
     setSaved(false);
     try {
-      await client.updateAgent(agentId!, { guardrails, toolNames });
+      await client.updateAgent(agentId!, { guardrails, toolNames, toolPolicies: policies });
       setSaved(true);
       revalidator.revalidate();
     } catch (caught) {
@@ -128,7 +133,7 @@ export function AgentConfigPage() {
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-2">
-            {allTools.map((tool) => {
+            {allTools.map(({ name: tool }) => {
               const enabled = toolNames.includes(tool);
               return (
                 <button
@@ -166,38 +171,21 @@ export function AgentConfigPage() {
             the agent's request open until someone decides on the Approvals tab.
           </CardDescription>
         </CardHeader>
-        <CardContent className="p-0">
-          {policies.length === 0 ? (
-            <EmptyState icon={<ShieldCheck className="size-6" />} title="No tool-call policies">
-              Every tool this agent can reach runs unchecked. Add a rule via{' '}
-              <code className="font-mono text-2xs">PATCH /agents/{agentId}</code> to gate one —
-              for example, requiring approval when a refund exceeds a threshold.
-            </EmptyState>
-          ) : (
-            <ul className="divide-y divide-line">
-              {policies.map((rule, index) => (
-                <li key={index} className="flex flex-wrap items-baseline gap-2 px-6 py-3 text-sm">
-                  <code className="font-mono font-medium text-ink">{rule.tool}</code>
-                  {rule.field && (
-                    <code className="font-mono text-2xs text-ink-3">
-                      {rule.field}
-                      {rule.condition &&
-                        Object.entries(rule.condition).map(([op, value]) => ` ${op} ${value}`)}
-                    </code>
-                  )}
-                  <span
-                    className={
-                      rule.action === 'deny'
-                        ? 'rounded-full bg-danger/15 px-2 py-0.5 text-2xs font-medium text-danger-text'
-                        : 'rounded-full bg-warn/12 px-2 py-0.5 text-2xs font-medium text-warn-text'
-                    }
-                  >
-                    {rule.action}
-                  </span>
-                  {rule.reason && <span className="text-xs text-ink-3">{rule.reason}</span>}
-                </li>
-              ))}
-            </ul>
+        <CardContent>
+          <PolicyEditor
+            rules={policies}
+            tools={allTools}
+            onChange={(next) => {
+              setSaved(false);
+              setPolicies(next);
+            }}
+          />
+          {inheritedCount > 0 && (
+            <p className="mt-3 text-2xs text-ink-3">
+              Plus {inheritedCount} rule{inheritedCount === 1 ? '' : 's'} inherited from{' '}
+              <code className="font-mono">{definition.toolPoliciesSource}</code>, which also apply
+              and are edited on that agent.
+            </p>
           )}
         </CardContent>
       </Card>

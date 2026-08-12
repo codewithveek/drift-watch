@@ -55,6 +55,23 @@ export interface StateResponse {
   toolPolicies: ToolCallPolicyRule[];
 }
 
+/**
+ * GET /tools. Mirrors `ToolMetadata` in packages/server/src/tools.ts — the
+ * boolean hints deliberately echo MCP's tool-annotation vocabulary, and
+ * `fields` is what makes field-scoped policy authoring possible at all.
+ * These are descriptive only: nothing is gated because a tool is marked
+ * destructive, gating comes solely from explicit policy rules.
+ */
+export interface ToolMetadata {
+  name: string;
+  description: string;
+  fields: string[];
+  readOnly: boolean;
+  destructive: boolean;
+  idempotent: boolean;
+  sensitiveFields?: string[];
+}
+
 export interface DriftVerdict {
   drift: boolean;
   severity: DriftSeverity;
@@ -126,7 +143,7 @@ export const client = {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
-  getTools: () => api<{ tools: string[] }>('/tools'),
+  getTools: () => api<{ tools: ToolMetadata[] }>('/tools'),
 
   // --- per-agent state / history -------------------------------------------
   getState: (agentId: string) => api<StateResponse>(`/agents/${agentId}/state`),
