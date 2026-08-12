@@ -10,7 +10,7 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * DriftWatch console design tokens.
+ * DriftWatch console design tokens — "control center" light system.
  *
  * Structure matters here. Every theme-varying value lives in :root / .dark as
  * an UNPREFIXED custom property (--panel, --ink, --brand), and is then exposed
@@ -21,7 +21,7 @@
  * `bg-panel` would simply not exist).
  *
  * `@theme` below is therefore reserved for what does NOT change between
- * themes: type scale, radii, z-scale, motion curves.
+ * themes: type scale, radii, z-scale, motion curves, elevation shape.
  *
  * Product register: restrained color, state reserved for state.
  */
@@ -39,7 +39,7 @@
    * this is product UI viewed at consistent DPI, where a heading that shrinks
    * inside a sidebar looks worse, not better. The tight ratio keeps the many
    * type elements on a dense ops surface from reading as noise. One family
-   * (the system stack below) in multiple weights — no display/body pairing.
+   * (Inter) in multiple weights — no display/body pairing.
    */
   --text-2xs: 0.6875rem; /* 11px — dense table meta, timestamps */
   --text-2xs--line-height: 1rem;
@@ -53,129 +53,160 @@
   --text-lg--line-height: 1.5rem;
   --text-xl: 1.1875rem; /* 19px — page titles */
   --text-xl--line-height: 1.75rem;
-  --text-2xl: 1.5rem; /* 24px — the ceiling; this is a tool, not a page */
+  --text-2xl: 1.5rem; /* 24px — section headings */
   --text-2xl--line-height: 2rem;
+  /*
+   * Hero metric counters. The only step that exists purely to be read at a
+   * glance from across a desk, so it gets the tight tracking that stops big
+   * digits from opening gaps between themselves.
+   */
+  --text-metric: 2.125rem; /* 34px */
+  --text-metric--line-height: 2.375rem;
+  --text-metric--letter-spacing: -0.02em;
+  --text-metric--font-weight: 700;
 
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    sans-serif;
   /* Tabular figures for metrics/timestamps so columns don't jitter as they poll. */
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 
   /*
-   * Radius. shadcn derives its own scale from --radius (see the bridge below);
-   * these are the values behind it.
+   * Radius. shadcn derives its own scale from --radius (see the bridge below).
+   * `xl` is the card radius and sits at 14px — the midpoint of the 12-16px
+   * band the control-center system specifies — so shadcn's stock `rounded-xl`
+   * Card lands on it without a single component edit.
    */
-  --radius-sm: 0.25rem;
-  --radius-md: 0.375rem;
-  --radius-lg: 0.5rem;
-  --radius-xl: 0.75rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.625rem;
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1.125rem;
+
+  /*
+   * Elevation. Overriding Tailwind's OWN shadow scale rather than inventing a
+   * parallel one: shadcn components reach for `shadow-xs`/`shadow-sm`
+   * internally, so redefining these is what makes every generated component
+   * cast the soft, near-colorless control-center shadow instead of the harsh
+   * default. Depth comes from the surface ramp; the shadow only separates.
+   */
+  --shadow-xs: 0 1px 2px -1px oklch(0.21 0.035 266 / 0.05);
+  --shadow-sm:
+    0 4px 6px -1px oklch(0.21 0.035 266 / 0.04), 0 2px 4px -1px oklch(0.21 0.035 266 / 0.025);
+  --shadow-md:
+    0 10px 15px -3px oklch(0.21 0.035 266 / 0.05), 0 4px 6px -2px oklch(0.21 0.035 266 / 0.03);
+  --shadow-lg:
+    0 16px 32px -8px oklch(0.21 0.035 266 / 0.1), 0 4px 10px -3px oklch(0.21 0.035 266 / 0.05);
 }
 
 /*
  * ── LIGHT (default) ────────────────────────────────────────────────────────
- * A cool near-white tinted toward the brand's own sky hue (256) — never a warm
- * cream/sand/parchment. That warm near-white band is the saturated default
+ * A cool near-white canvas with white cards lifted off it. Never a warm
+ * cream/sand/parchment: that warm near-white band is the saturated default
  * look, and it would break the cool-slate identity this product already has.
  *
- * Contrast, computed rather than eyeballed (WCAG, on the surface each is
- * actually used on):
- *   ink 16.7:1 · ink-2 8.5:1 · ink-3 5.5:1 on white
- *   ink-3 4.8:1 on panel-2 (the tightest pairing) · white on brand fill 6.5:1
- * ink-3 sits at the lightest value that still clears 4.5:1 on EVERY surface, so
- * it reads as genuinely muted rather than as a second body tone — but never
- * drifts into the light-gray-on-near-white trap, which is the most common
- * readability failure in light UI.
+ * Contrast is computed rather than eyeballed — see scripts/contrast.mjs, which
+ * checks every pairing this file actually ships. ink-3 sits at the lightest
+ * value that still clears 4.5:1 on EVERY surface it is used on, so it reads as
+ * genuinely muted rather than as a second body tone — but never drifts into
+ * the light-gray-on-near-white trap, which is the most common readability
+ * failure in light UI.
  */
 :root {
   color-scheme: light;
 
   /* Neutral surface ramp. Cards are white so they lift off the canvas without
      needing heavy shadows. */
-  --canvas: oklch(0.970 0.005 256); /* body / app background */
-  --panel: oklch(1 0 0); /* cards, primary surface */
-  --panel-2: oklch(0.955 0.007 256); /* inputs, hover, elevated */
-  --line: oklch(0.900 0.008 256); /* hairline borders */
-  --line-2: oklch(0.830 0.010 256); /* stronger borders */
+  --canvas: oklch(0.978 0.002 256); /* body / app background */
+  --panel: oklch(1 0 0); /* cards, sidebar, primary surface */
+  --panel-2: oklch(0.968 0.006 256); /* inputs, hover, elevated */
+  --line: oklch(0.934 0.01 256); /* hairline borders */
+  --line-2: oklch(0.872 0.017 256); /* stronger borders, dividers under load */
 
   /* Ink ramp — dark text on light surfaces. */
-  --ink: oklch(0.235 0.015 256); /* primary text */
-  --ink-2: oklch(0.420 0.016 256); /* secondary text / body */
-  --ink-3: oklch(0.520 0.016 256); /* muted labels — see the contrast note above */
+  --ink: oklch(0.213 0.035 266); /* primary text */
+  --ink-2: oklch(0.372 0.031 260); /* secondary text / body */
+  --ink-3: oklch(0.53 0.036 257); /* muted labels — see the contrast note above */
 
   /*
-   * Brand — sky. Named `brand`, NOT `accent`: shadcn/ui owns `accent` in its
+   * Brand. Named `brand`, NOT `accent`: shadcn/ui owns `accent` in its
    * component vocabulary, where it means a subtle raised hover surface.
    * `-bright` means "the variant that reads as text/icon ON the current
-   * surface", so it is darker here and lighter in dark mode.
+   * surface", so it is the same weight here and lighter in dark mode.
    */
-  --brand: oklch(0.480 0.160 250); /* button / active fill */
-  --brand-hover: oklch(0.425 0.160 250); /* darkens on hover in light */
-  --brand-bright: oklch(0.470 0.155 250); /* links, icons, focus ring */
+  --brand: oklch(0.546 0.215 263); /* button / active fill */
+  --brand-hover: oklch(0.487 0.209 263); /* darkens on hover in light */
+  --brand-bright: oklch(0.546 0.215 263); /* links, icons, focus ring */
 
-  /* Semantic status — fills/dots, plus a darker text tone for light tints. */
-  --ok: oklch(0.600 0.150 158);
-  --ok-text: oklch(0.440 0.120 158);
-  --warn: oklch(0.700 0.140 70);
-  --warn-text: oklch(0.440 0.100 70);
-  --danger: oklch(0.570 0.200 22);
-  --danger-text: oklch(0.470 0.180 22);
-  --info: oklch(0.580 0.140 235);
-  --info-text: oklch(0.450 0.130 235);
-
-  /* Strength of the brand wash behind the page header. */
-  --wash-strength: 7%;
+  /*
+   * Semantic status. Each pair is a fill (dots, chart bars, solid marks) and a
+   * text tone dark enough to sit on that fill's own faint tint — the pill
+   * treatment the system specifies: desaturated translucent background, deep
+   * high-contrast label of the same hue.
+   */
+  --ok: oklch(0.68 0.148 158);
+  --ok-text: oklch(0.442 0.106 159);
+  --warn: oklch(0.78 0.148 78);
+  --warn-text: oklch(0.455 0.098 72);
+  --danger: oklch(0.62 0.209 25);
+  --danger-text: oklch(0.47 0.184 25);
+  --info: oklch(0.62 0.163 250);
+  --info-text: oklch(0.462 0.17 260);
 
   /* Elevation. Soft on light — depth comes from the surface ramp. */
-  --elevation-raised: 0 1px 2px oklch(0.235 0.015 256 / 0.08);
-  --elevation-overlay:
-    0 8px 24px -4px oklch(0.235 0.015 256 / 0.12),
-    0 2px 8px -2px oklch(0.235 0.015 256 / 0.08);
+  --elevation-raised: var(--shadow-sm);
+  --elevation-overlay: var(--shadow-lg);
 }
 
 /*
  * ── DARK ───────────────────────────────────────────────────────────────────
- * The original cool-slate control-room palette, preserved exactly. All three
- * ink steps clear 4.5:1 on --panel.
+ * The cool-slate control-room palette, re-derived from the same hue family so
+ * the two themes read as one product seen under different light. All three ink
+ * steps clear 4.5:1 on --panel.
  */
 .dark {
   color-scheme: dark;
 
-  --canvas: oklch(0.168 0.013 256);
-  --panel: oklch(0.213 0.014 256);
-  --panel-2: oklch(0.257 0.015 256);
-  --line: oklch(0.302 0.014 256);
-  --line-2: oklch(0.382 0.016 256);
+  --canvas: oklch(0.168 0.013 262);
+  --panel: oklch(0.213 0.014 262);
+  --panel-2: oklch(0.257 0.015 262);
+  --line: oklch(0.302 0.014 262);
+  --line-2: oklch(0.382 0.016 262);
 
-  --ink: oklch(0.972 0.004 256);
-  --ink-2: oklch(0.806 0.012 256);
-  --ink-3: oklch(0.668 0.014 256);
+  --ink: oklch(0.972 0.004 262);
+  --ink-2: oklch(0.806 0.012 262);
+  --ink-3: oklch(0.668 0.016 262);
 
-  --brand: oklch(0.585 0.152 250);
-  --brand-hover: oklch(0.648 0.152 250);
-  --brand-bright: oklch(0.760 0.128 248);
+  /*
+   * Dark-mode hover LIGHTENS, which works against the white label on the fill.
+   * The ceiling is real: past L 0.575 white drops below 4.5:1 (scripts/
+   * contrast.mjs catches it), so the hover step is a small lift rather than the
+   * usual generous one. `-bright` is free to go much lighter — it is only ever
+   * text/icon ON a surface, never a fill under white.
+   */
+  --brand: oklch(0.525 0.19 263);
+  --brand-hover: oklch(0.573 0.19 263);
+  --brand-bright: oklch(0.76 0.128 258);
 
-  --ok: oklch(0.735 0.150 158);
+  --ok: oklch(0.735 0.15 158);
   --ok-text: oklch(0.838 0.132 160);
   --warn: oklch(0.795 0.132 78);
   --warn-text: oklch(0.868 0.108 82);
-  --danger: oklch(0.640 0.190 20);
-  --danger-text: oklch(0.808 0.120 20);
-  --info: oklch(0.700 0.120 235);
-  --info-text: oklch(0.822 0.100 235);
-
-  --wash-strength: 12%;
+  --danger: oklch(0.64 0.19 22);
+  --danger-text: oklch(0.808 0.12 20);
+  --info: oklch(0.7 0.12 250);
+  --info-text: oklch(0.822 0.1 250);
 
   --elevation-raised: 0 1px 2px oklch(0 0 0 / 0.3);
-  --elevation-overlay:
-    0 8px 24px -4px oklch(0 0 0 / 0.45),
-    0 2px 8px -2px oklch(0 0 0 / 0.3);
+  --elevation-overlay: 0 16px 32px -8px oklch(0 0 0 / 0.5), 0 4px 10px -3px oklch(0 0 0 / 0.35);
 }
 
 /*
  * ── shadcn/ui bridge ──────────────────────────────────────────────────────
  * shadcn components are written against a fixed vocabulary (--background,
- * --primary, --muted, --ring, …). Pointing those at the DriftWatch tokens
- * means every generated component inherits this product's identity instead of
- * a generic slate palette — and upstream `shadcn add` diffs stay clean,
- * because we never edit the components themselves.
+ * --primary, --muted, --ring, --sidebar-*, …). Pointing those at the
+ * DriftWatch tokens means every generated component inherits this product's
+ * identity instead of a generic slate palette — and upstream `shadcn add`
+ * diffs stay clean, because we never edit the components themselves.
  *
  * Theme-independent by construction: each points at a token that already
  * switches with :root / .dark above.
@@ -213,6 +244,22 @@
   --ring: var(--brand-bright);
 
   --radius: var(--radius-md);
+
+  /*
+   * The left rail is the same white as a card, separated from the canvas by a
+   * hairline rather than by its own tint — the second neutral layer here is the
+   * CANVAS being slightly darker, not the chrome. Active nav is the one place
+   * the brand tint appears in the rail, per "accent for current selection, not
+   * decoration"; hover stays on the neutral raised surface.
+   */
+  --sidebar: var(--panel);
+  --sidebar-foreground: var(--ink-2);
+  --sidebar-primary: var(--brand);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: var(--panel-2);
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: var(--line);
+  --sidebar-ring: var(--brand-bright);
 }
 
 /*
@@ -266,22 +313,39 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
 }
 
 @layer base {
+  /*
+   * shadcn's canonical border reset, and NOT optional.
+   *
+   * Tailwind v4 changed the default border colour to `currentColor`, and every
+   * shadcn component writes a bare `border` (Card, Table, Input, the outline
+   * Button). Without this rule those hairlines inherit the ink colour of
+   * whatever they contain, so a card outlines itself in near-black text
+   * colour instead of the surface hairline. It reads as a heavy 2010s panel
+   * border and it is very easy to mistake for a deliberate design choice.
+   */
+  * {
+    border-color: var(--border);
+  }
+
   body {
     margin: 0;
     min-height: 100vh;
+    /* Flat canvas. The depth in this system is carried by the surface ramp and
+       the hairlines, not by a wash behind the content. */
     background-color: var(--canvas);
-    /* Faint brand wash at the top — depth, not decoration. */
-    background-image: radial-gradient(
-      120% 60% at 50% -10%,
-      color-mix(in oklch, var(--brand) var(--wash-strength), transparent),
-      transparent 60%
-    );
-    background-attachment: fixed;
     color: var(--ink);
-    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    font-family: var(--font-sans);
     font-feature-settings: 'cv05', 'ss01';
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
@@ -291,6 +355,16 @@
   :focus-visible {
     outline: 2px solid var(--brand-bright);
     outline-offset: 2px;
+  }
+
+  /* Even line lengths on headings; fewer orphans in prose. */
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
   }
 
   /* Restrained scrollbar — matches the surface, no reinvention. */
@@ -307,6 +381,22 @@
     border-radius: 999px;
     border: 3px solid transparent;
     background-clip: content-box;
+  }
+}
+
+/*
+ * The one card-hover treatment in the system, applied on top of shadcn's Card
+ * so the lift is shared by every interactive bento block without forking the
+ * component. A card that is a link or a control gets `lift`; a static one
+ * doesn't — hover feedback on something you cannot click is noise.
+ */
+@utility lift {
+  transition:
+    box-shadow 200ms var(--ease-out-quint),
+    border-color 200ms var(--ease-out-quint);
+  &:hover {
+    box-shadow: var(--shadow-md);
+    border-color: var(--line-2);
   }
 }
 
@@ -336,6 +426,25 @@
   100% {
     transform: scale(2.2);
     opacity: 0;
+  }
+}
+
+/*
+ * Queue entrance. Used ONLY on the approvals queue, where items arrive while
+ * you are looking at the surface and a row appearing without motion reads as a
+ * rendering glitch. Deliberately not applied page-wide: product UI loads into a
+ * task, and an orchestrated page-load sequence would just be a wait. The
+ * animated state is the DEFAULT-visible one (opacity ends at 1 and reduced
+ * motion collapses the duration), so a headless render never ships blank.
+ */
+@keyframes queue-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 

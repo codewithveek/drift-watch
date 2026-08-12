@@ -1,5 +1,6 @@
+import { useMemo, useState } from 'react';
 import { Link, useRouteLoaderData } from 'react-router';
-import { ChevronRight, ServerCog } from 'lucide-react';
+import { ChevronRight, LineChart, Search, ServerCog, ShieldCheck } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -9,77 +10,327 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Card } from '@/components/ui/card';
-import { EmptyState, SeverityBadge, StatusDot, STATUS_LABEL, timeAgo } from '@/components/domain';
+import { Input } from '@/components/ui/input';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { DriftVerdictChart } from '@/components/activity-chart';
 import { RegisterAgentDialog } from '@/components/register-agent-dialog';
-import type { FleetSummary } from '@/lib/fleet';
+import {
+  EmptyState,
+  MetricTile,
+  RiskBadge,
+  SectionHeading,
+  SeverityBadge,
+  StatusDot,
+  STATUS_LABEL,
+  timeAgo,
+} from '@/components/domain';
+import { allVerdicts, type AgentSummary, type FleetSummary } from '@/lib/fleet';
+import { assessRisk, byRiskDescending, type RiskAssessment } from '@/lib/risk';
+import { cn } from '@/lib/utils';
+
+const DAY_MS = 86_400_000;
+
+/* ── Filters ──────────────────────────────────────────────────────────── */
+
+type FilterId = 'all' | 'attention' | 'running' | 'paused';
+
+const FILTERS: { id: FilterId; label: string; match: (row: Row) => boolean }[] = [
+  { id: 'all', label: 'All', match: () => true },
+  { id: 'attention', label: 'Needs attention', match: (row) => row.risk.level !== 'low' },
+  { id: 'running', label: 'Running', match: (row) => row.agent.state.status === 'running' },
+  { id: 'paused', label: 'Paused', match: (row) => row.agent.state.status !== 'running' },
+];
+
+interface Row {
+  agent: AgentSummary;
+  risk: RiskAssessment;
+}
+
+/* ── Page ─────────────────────────────────────────────────────────────── */
 
 export function FleetPage() {
   const fleet = useRouteLoaderData('root') as FleetSummary;
   const now = Date.now();
 
+  const [filter, setFilter] = useState<FilterId>('all');
+  const [query, setQuery] = useState('');
+
+  const rows: Row[] = useMemo(
+    () => fleet.agents.map((agent) => ({ agent, risk: assessRisk(agent, now) })),
+    [fleet, now],
+  );
+
+  const counts = Object.fromEntries(
+    FILTERS.map((f) => [f.id, rows.filter(f.match).length]),
+  ) as Record<FilterId, number>;
+
+  const needle = query.trim().toLowerCase();
+  const visible = rows.filter((row) => {
+    if (!FILTERS.find((f) => f.id === filter)!.match(row)) return false;
+    if (!needle) return true;
+    const { definition } = row.agent;
+    return [definition.name, definition.id, definition.owner ?? '']
+      .join(' ')
+      .toLowerCase()
+      .includes(needle);
+  });
+
+  const statusCounts = {
+    running: rows.filter((r) => r.agent.state.status === 'running').length,
+    paused: rows.filter((r) => r.agent.state.status === 'paused').length,
+    throttled: rows.filter((r) => r.agent.state.status === 'throttled').length,
+  };
+
+  const verdicts = useMemo(() => allVerdicts(fleet), [fleet]);
+  const recent = verdicts.filter((entry) => now - entry.at <= DAY_MS);
+  const recentHigh = recent.filter((entry) => entry.severity === 'high').length;
+  const recentMedium = recent.filter((entry) => entry.severity === 'medium').length;
+
+  const blocking = fleet.agents.reduce((sum, agent) => sum + agent.pendingToolCalls, 0);
+  const ruleCount = fleet.agents.reduce(
+    (sum, agent) => sum + (agent.definition.toolPolicies?.length ?? 0),
+    0,
+  );
+  const ungated = fleet.agents.filter(
+    (agent) => (agent.definition.toolPolicies?.length ?? 0) === 0,
+  ).length;
+
+  const ranked = useMemo(() => byRiskDescending(fleet.agents, now), [fleet, now]);
+  const attention = ranked.filter((entry) => entry.risk.score > 0).slice(0, 6);
+
+  if (fleet.agents.length === 0) return <FirstRun />;
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-ink">Fleet</h1>
-          <p className="text-sm text-ink-3">
-            {fleet.agents.length} {fleet.agents.length === 1 ? 'agent' : 'agents'} registered
-            {fleet.pendingCount > 0 && ` · ${fleet.pendingCount} awaiting a decision`}
-          </p>
+    <div className="space-y-8">
+      <section>
+        <SectionHeading
+          as="h1"
+          title="Operational summary"
+          description="Everything the control plane knows about the fleet right now."
+        />
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <MetricTile
+            label="Registered agents"
+            value={fleet.agents.length}
+            footer={
+              <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                {(['running', 'paused', 'throttled'] as const)
+                  .filter((status) => statusCounts[status] > 0)
+                  .map((status) => (
+                    <span key={status} className="inline-flex items-center gap-1.5">
+                      <StatusDot status={status} />
+                      <span className="tabular-nums">{statusCounts[status]}</span>
+                      {STATUS_LABEL[status].toLowerCase()}
+                    </span>
+                  ))}
+              </span>
+            }
+          />
+
+          <MetricTile
+            label="Awaiting a decision"
+            value={fleet.pendingCount}
+            to="/approvals"
+            emphasis={fleet.pendingCount > 0 ? 'warn' : 'neutral'}
+            footer={
+              blocking > 0 ? (
+                <span className="inline-flex items-center rounded-full bg-warn/15 px-2 py-0.5 font-medium text-warn-text">
+                  {blocking} blocking a live request
+                </span>
+              ) : fleet.pendingCount > 0 ? (
+                'control actions only — nothing is blocked'
+              ) : (
+                'queue clear'
+              )
+            }
+          />
+
+          <MetricTile
+            label="Drift verdicts, 24h"
+            value={recent.length}
+            emphasis={recentHigh > 0 ? 'danger' : 'neutral'}
+            footer={
+              recent.length === 0 ? (
+                'no scans in the last day'
+              ) : (
+                <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="tabular-nums">{recentHigh} high</span>
+                  <span className="tabular-nums">{recentMedium} medium</span>
+                  <span className="tabular-nums">
+                    {recent.length - recentHigh - recentMedium} lower
+                  </span>
+                </span>
+              )
+            }
+          />
+
+          <MetricTile
+            label="Tool-call rules in force"
+            value={ruleCount}
+            footer={
+              ungated === 0
+                ? 'every agent has at least one rule'
+                : `${ungated} of ${fleet.agents.length} agents run ungated`
+            }
+          />
         </div>
-        <RegisterAgentDialog />
+      </section>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <DriftVerdictChart
+          className="lg:col-span-2"
+          history={verdicts}
+          empty={
+            <EmptyState icon={<LineChart className="size-5" />} title="No verdicts in this window">
+              Autopilot records one verdict per scan. Widen the range, or run “Scan now” on an
+              agent to force one.
+            </EmptyState>
+          }
+        />
+
+        <Card className="gap-0">
+          <div className="px-6 pb-3">
+            <h2 className="text-base font-semibold tracking-tight text-ink">Needs attention</h2>
+            <p className="mt-1 text-xs text-ink-3">
+              Ranked by what is blocking, paused, or drifting.
+            </p>
+          </div>
+          {attention.length === 0 ? (
+            <EmptyState icon={<ShieldCheck className="size-5" />} title="Fleet is quiet">
+              No agent has a pending decision, a recent high-severity verdict, or a paused runtime.
+            </EmptyState>
+          ) : (
+            <ol className="divide-y divide-line border-t border-line">
+              {attention.map(({ agent, risk }, index) => (
+                <li key={agent.definition.id}>
+                  <Link
+                    to={`/agents/${agent.definition.id}`}
+                    className="flex items-start gap-3 px-6 py-2.5 transition-colors hover:bg-panel-2/70"
+                  >
+                    <span className="mt-0.5 w-4 shrink-0 text-right text-2xs tabular-nums text-ink-3">
+                      {index + 1}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-2">
+                        <span className="truncate text-sm font-medium text-ink">
+                          {agent.definition.name}
+                        </span>
+                        <RiskBadge level={risk.level} />
+                      </span>
+                      <span className="mt-0.5 block truncate text-xs text-ink-3">
+                        {risk.signals[0]?.label}
+                      </span>
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ol>
+          )}
+        </Card>
       </div>
 
-      <Card className="overflow-hidden py-0">
-        {fleet.agents.length === 0 ? (
-          <EmptyState icon={<ServerCog className="size-6" />} title="No agents registered yet">
-            A deployment registers its own agent on first run — or use “Register agent” above to
-            add one now. Each appears here with its live status, latest drift verdict, and
-            anything waiting on your decision.
-          </EmptyState>
-        ) : (
-          <div className="overflow-x-auto">
+      <section>
+        <SectionHeading title="Agents">
+          <RegisterAgentDialog />
+        </SectionHeading>
+
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <ToggleGroup
+            type="single"
+            size="sm"
+            spacing={1}
+            value={filter}
+            onValueChange={(value) => value && setFilter(value as FilterId)}
+            aria-label="Filter agents"
+          >
+            {FILTERS.map((option) => (
+              <ToggleGroupItem
+                key={option.id}
+                value={option.id}
+                className="h-8 gap-1.5 rounded-full px-3 text-xs text-ink-3 data-[state=on]:bg-panel-2 data-[state=on]:text-ink"
+              >
+                {option.label}
+                <span className="tabular-nums text-ink-3">{counts[option.id]}</span>
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+
+          <div className="relative ml-auto w-full sm:w-56">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-ink-3" />
+            <Input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search name, id or owner"
+              aria-label="Search agents"
+              className="h-8 bg-panel pl-8 text-xs"
+            />
+          </div>
+        </div>
+
+        <Card className="overflow-hidden py-0">
+          {visible.length === 0 ? (
+            <EmptyState icon={<Search className="size-5" />} title="No agents match">
+              {needle
+                ? `Nothing matches “${query.trim()}” in this view.`
+                : 'Every agent is filtered out by the current selection.'}
+            </EmptyState>
+          ) : (
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead>Agent</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Model</TableHead>
-                  <TableHead>Last verdict</TableHead>
+                {/*
+                  Columns drop out by how much they help triage, not by source
+                  order: risk, status and the awaiting count are why an operator
+                  opens this table at all, so owner and last-verdict yield first.
+                  The alternative — one table scrolling sideways on a phone —
+                  hides exactly the columns that matter.
+                */}
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="pl-6">Agent</TableHead>
+                  <TableHead className="hidden xl:table-cell">Owner</TableHead>
+                  <TableHead>Risk</TableHead>
+                  <TableHead className="hidden sm:table-cell">Status</TableHead>
+                  <TableHead className="hidden lg:table-cell">Last verdict</TableHead>
                   <TableHead className="text-right">Awaiting</TableHead>
-                  <TableHead className="w-8" />
+                  <TableHead className="hidden w-10 sm:table-cell" />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {fleet.agents.map(({ definition, state, pendingApprovals, pendingToolCalls, lastVerdict }) => {
-                  const awaiting = pendingApprovals + pendingToolCalls;
+                {visible.map(({ agent, risk }) => {
+                  const { definition, state, lastVerdict } = agent;
+                  const awaiting = agent.pendingApprovals + agent.pendingToolCalls;
                   return (
                     <TableRow key={definition.id} className="group">
-                      <TableCell>
+                      <TableCell className="py-2.5 pl-6">
                         <Link
                           to={`/agents/${definition.id}`}
-                          className="block rounded-sm font-medium text-ink hover:text-brand-bright"
+                          className="block rounded-sm font-medium text-ink transition-colors hover:text-brand-bright"
                         >
                           {definition.name}
-                          <span className="block font-mono text-2xs font-normal text-ink-3">
+                          {/* The id is the widest thing in the row and, being
+                              nowrap, it alone sets the table's minimum width —
+                              enough to push the Awaiting column off a phone. */}
+                          <span className="hidden font-mono text-2xs font-normal text-ink-3 sm:block">
                             {definition.id}
                           </span>
                         </Link>
                       </TableCell>
+                      <TableCell className="hidden text-xs text-ink-2 xl:table-cell">
+                        {definition.owner ?? <span className="text-ink-3">—</span>}
+                      </TableCell>
                       <TableCell>
+                        <RiskBadge level={risk.level} />
+                      </TableCell>
+                      <TableCell className="hidden sm:table-cell">
                         <span className="inline-flex items-center gap-1.5 text-sm text-ink-2">
                           <StatusDot status={state.status} ping />
                           {STATUS_LABEL[state.status]}
                         </span>
                       </TableCell>
-                      <TableCell className="font-mono text-2xs text-ink-3">
-                        {state.activeModel ?? 'default'}
-                      </TableCell>
-                      <TableCell>
+                      <TableCell className="hidden lg:table-cell">
                         {lastVerdict ? (
                           <span className="inline-flex items-center gap-2">
                             <SeverityBadge severity={lastVerdict.severity} />
-                            <span className="text-2xs text-ink-3">
+                            <span className="text-2xs tabular-nums text-ink-3">
                               {timeAgo(lastVerdict.at, now)}
                             </span>
                           </span>
@@ -87,11 +338,16 @@ export function FleetPage() {
                           <span className="text-2xs text-ink-3">no scans yet</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">
+                      <TableCell className="text-right">
                         {awaiting > 0 ? (
                           <Link
                             to={`/agents/${definition.id}/approvals`}
-                            className="inline-flex items-center rounded-full bg-warn/12 px-2 py-0.5 text-xs font-medium text-warn-text hover:bg-warn/20"
+                            className={cn(
+                              'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium tabular-nums transition-colors',
+                              agent.pendingToolCalls > 0
+                                ? 'bg-warn/15 text-warn-text hover:bg-warn/25'
+                                : 'bg-info/15 text-info-text hover:bg-info/25',
+                            )}
                           >
                             {awaiting}
                           </Link>
@@ -99,16 +355,42 @@ export function FleetPage() {
                           <span className="text-xs text-ink-3">—</span>
                         )}
                       </TableCell>
-                      <TableCell>
-                        <ChevronRight className="size-4 text-ink-3 opacity-0 transition-opacity group-hover:opacity-100" />
+                      <TableCell className="hidden pr-6 sm:table-cell">
+                        <ChevronRight
+                          aria-hidden="true"
+                          className="size-4 text-ink-3 opacity-0 transition-opacity group-hover:opacity-100"
+                        />
                       </TableCell>
                     </TableRow>
                   );
                 })}
               </TableBody>
             </Table>
-          </div>
-        )}
+          )}
+        </Card>
+      </section>
+    </div>
+  );
+}
+
+/**
+ * First run. A fleet with no agents has nothing to summarise, so the whole
+ * bento would render as four zeroes and two empty cards — worse than useless,
+ * because it looks like the console is broken rather than unused.
+ */
+function FirstRun() {
+  return (
+    <div className="space-y-4">
+      <SectionHeading as="h1" title="Overview" />
+      <Card className="py-0">
+        <EmptyState
+          icon={<ServerCog className="size-5" />}
+          title="No agents registered yet"
+          action={<RegisterAgentDialog />}
+        >
+          A deployment registers its own agent on first run — or add one now. Each appears here
+          with its live status, latest drift verdict, and anything waiting on your decision.
+        </EmptyState>
       </Card>
     </div>
   );

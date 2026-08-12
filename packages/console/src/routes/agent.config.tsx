@@ -7,6 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { PolicyEditor } from '@/components/policy-editor';
+import { Notice } from '@/components/domain';
+import { cn } from '@/lib/utils';
 import type { AgentLoaderData } from './agent';
 
 export interface ConfigLoaderData {
@@ -49,8 +51,16 @@ export function AgentConfigPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // Enables the save bar. Without it the bar is always live and gives no signal
+  // about whether there is anything to save.
+  const [dirty, setDirty] = useState(false);
 
   const inheritedCount = (state.toolPolicies?.length ?? 0) - policies.length;
+
+  function touch() {
+    setSaved(false);
+    setDirty(true);
+  }
 
   async function save() {
     setSaving(true);
@@ -59,6 +69,7 @@ export function AgentConfigPage() {
     try {
       await client.updateAgent(agentId!, { guardrails, toolNames, toolPolicies: policies });
       setSaved(true);
+      setDirty(false);
       revalidator.revalidate();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Failed to save');
@@ -68,21 +79,17 @@ export function AgentConfigPage() {
   }
 
   return (
-    <div className="space-y-4">
-      {error && (
-        <p className="rounded-md bg-danger/12 px-3 py-2 text-sm text-danger-text" role="alert">
-          {error}
-        </p>
-      )}
+    <div className="space-y-4 pb-20">
+      {error && <Notice tone="error">{error}</Notice>}
       {saved && !error && (
-        <p className="rounded-md bg-ok/12 px-3 py-2 text-sm text-ok-text" role="status">
+        <Notice tone="success">
           Saved. This applies to the agent's next run — no restart needed.
-        </p>
+        </Notice>
       )}
 
       <Card>
         <CardHeader>
-          <CardTitle>Guardrails</CardTitle>
+          <CardTitle className="text-base">Guardrails</CardTitle>
           <CardDescription>
             Per-agent overrides. Anything left blank inherits the deployment default
             {definition.guardrailsSource && (
@@ -108,7 +115,7 @@ export function AgentConfigPage() {
                   value={guardrails[key] === undefined ? '' : String(guardrails[key])}
                   onChange={(event) => {
                     const raw = event.target.value;
-                    setSaved(false);
+                    touch();
                     setGuardrails((current) => {
                       const next = { ...current };
                       if (raw === '') delete next[key];
@@ -126,45 +133,64 @@ export function AgentConfigPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Tools</CardTitle>
+          <CardTitle className="text-base">Tools</CardTitle>
           <CardDescription>
-            Which of the server's registered tools this agent may call.
+            Which of the server's registered tools this agent may call.{' '}
+            <span className="tabular-nums">{toolNames.length}</span> of{' '}
+            <span className="tabular-nums">{allTools.length}</span> enabled.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-2">
-            {allTools.map(({ name: tool }) => {
+            {allTools.map(({ name: tool, destructive }) => {
               const enabled = toolNames.includes(tool);
               return (
                 <button
                   key={tool}
                   type="button"
                   aria-pressed={enabled}
+                  title={destructive ? `${tool} — marked destructive` : tool}
                   onClick={() => {
-                    setSaved(false);
+                    touch();
                     setToolNames((current) =>
                       current.includes(tool)
                         ? current.filter((name) => name !== tool)
                         : [...current, tool],
                     );
                   }}
-                  className={
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-full px-3 py-1 font-mono text-xs font-medium transition-colors',
                     enabled
-                      ? 'rounded-full bg-brand px-3 py-1 font-mono text-xs font-medium text-primary-foreground transition-colors hover:bg-brand-hover'
-                      : 'rounded-full bg-panel-2 px-3 py-1 font-mono text-xs font-medium text-ink-3 transition-colors hover:text-ink-2'
-                  }
+                      ? 'bg-brand text-primary-foreground hover:bg-brand-hover'
+                      : 'bg-panel-2 text-ink-3 hover:text-ink-2',
+                  )}
                 >
+                  {destructive && (
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        'size-1.5 rounded-full',
+                        enabled ? 'bg-primary-foreground/70' : 'bg-danger',
+                      )}
+                    />
+                  )}
                   {tool}
                 </button>
               );
             })}
           </div>
+          {allTools.some((tool) => tool.destructive) && (
+            <p className="mt-3 text-2xs text-ink-3">
+              A dot marks a tool the registry reports as destructive. That is descriptive only —
+              nothing is gated until a policy below says so.
+            </p>
+          )}
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Tool-call policies</CardTitle>
+          <CardTitle className="text-base">Tool-call policies</CardTitle>
           <CardDescription>
             Evaluated before a tool runs. <code className="font-mono text-2xs">deny</code> blocks
             the call outright; <code className="font-mono text-2xs">require_approval</code> holds
@@ -176,7 +202,7 @@ export function AgentConfigPage() {
             rules={policies}
             tools={allTools}
             onChange={(next) => {
-              setSaved(false);
+              touch();
               setPolicies(next);
             }}
           />
@@ -190,12 +216,24 @@ export function AgentConfigPage() {
         </CardContent>
       </Card>
 
-      <div className="flex justify-end">
-        <Button onClick={save} disabled={saving}>
-          <Save className="size-3.5" />
-          {saving ? 'Saving…' : 'Save changes'}
-        </Button>
-      </div>
+      {/*
+        A save bar pinned to the viewport, not a button at the end of the page.
+        This form is three cards tall; a Save that scrolls out of view while you
+        edit the third one is the reason config screens get abandoned half-done.
+        It exists only while there is something to save — a permanently floating
+        disabled button would just be furniture hovering over the content.
+      */}
+      {dirty && (
+        <div className="sticky bottom-4 z-(--z-sticky) flex justify-end motion-safe:animate-[queue-in_200ms_var(--ease-out-quint)_both]">
+          <div className="flex items-center gap-3 rounded-full border border-line bg-panel py-2 pr-2 pl-4 shadow-md">
+            <span className="text-xs text-ink-3">Unsaved changes</span>
+            <Button size="sm" onClick={save} disabled={saving}>
+              <Save className="size-3.5" />
+              {saving ? 'Saving…' : 'Save changes'}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

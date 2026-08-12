@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { Plus } from 'lucide-react';
 import { client } from '@/api';
@@ -20,8 +20,12 @@ import {
  * tool-call policies are edited on the agent's own Config tab once it exists,
  * rather than front-loading every field into a creation form nobody can fill
  * in meaningfully yet.
+ *
+ * The trigger is injectable so the sidebar's compact group action and the
+ * overview's full button open the same dialog rather than two copies of this
+ * form drifting apart.
  */
-export function RegisterAgentDialog() {
+export function RegisterAgentDialog({ trigger }: { trigger?: ReactNode } = {}) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
@@ -70,10 +74,12 @@ export function RegisterAgentDialog() {
       }}
     >
       <DialogTrigger asChild>
-        <Button size="sm">
-          <Plus className="size-3.5" />
-          Register agent
-        </Button>
+        {trigger ?? (
+          <Button size="sm">
+            <Plus className="size-3.5" />
+            Register agent
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent>
         <form onSubmit={submit}>

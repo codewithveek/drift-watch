@@ -12,31 +12,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { EmptyState } from '@/components/domain';
-
-/** The comparison operators a rule's `condition` supports, plus "no condition". */
-const OPERATORS = [
-  { value: 'any', label: 'is present' },
-  { value: 'equals', label: '=' },
-  { value: 'gt', label: '>' },
-  { value: 'gte', label: '≥' },
-  { value: 'lt', label: '<' },
-  { value: 'lte', label: '≤' },
-  { value: 'exists', label: 'exists' },
-] as const;
-
-type Operator = (typeof OPERATORS)[number]['value'];
+import { describeCondition, OPERATORS, type Operator } from '@/lib/policy';
 
 const SEVERITIES = ['none', 'low', 'medium', 'high'] as const;
-
-/** Renders a rule's condition the way it reads in the policy, e.g. `amountUsd > 100`. */
-function describeCondition(rule: ToolCallPolicyRule): string | null {
-  if (!rule.field) return null;
-  const entries = Object.entries(rule.condition ?? {});
-  if (entries.length === 0) return `${rule.field} is present`;
-  const [op, value] = entries[0];
-  const label = OPERATORS.find((o) => o.value === op)?.label ?? op;
-  return op === 'exists' ? `${rule.field} ${value ? 'exists' : 'is absent'}` : `${rule.field} ${label} ${value}`;
-}
 
 function newRule(tool: string): ToolCallPolicyRule {
   return { tool, action: 'require_approval', severity: 'medium' };
@@ -109,20 +87,18 @@ export function PolicyEditor({
           requiring approval when a refund exceeds a threshold.
         </EmptyState>
       ) : (
-        <ul className="divide-y divide-line rounded-lg border border-line">
+        <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line">
           {rules.map((rule, index) => {
             const condition = describeCondition(rule);
             return (
               <li key={index} className="flex flex-wrap items-center gap-2 px-3 py-2.5 text-sm">
                 <code className="font-mono font-medium text-ink">{rule.tool}</code>
-                {condition && (
-                  <code className="font-mono text-2xs text-ink-3">{condition}</code>
-                )}
+                {condition && <code className="font-mono text-2xs text-ink-3">{condition}</code>}
                 <span
                   className={
                     rule.action === 'deny'
                       ? 'rounded-full bg-danger/15 px-2 py-0.5 text-2xs font-medium text-danger-text'
-                      : 'rounded-full bg-warn/12 px-2 py-0.5 text-2xs font-medium text-warn-text'
+                      : 'rounded-full bg-warn/15 px-2 py-0.5 text-2xs font-medium text-warn-text'
                   }
                 >
                   {rule.action === 'deny' ? 'deny' : 'require approval'}
@@ -131,8 +107,8 @@ export function PolicyEditor({
                 <Button
                   type="button"
                   variant="ghost"
-                  size="icon"
-                  className="ml-auto"
+                  size="icon-sm"
+                  className="ml-auto text-ink-3"
                   aria-label={`Remove rule for ${rule.tool}`}
                   onClick={() => onChange(rules.filter((_, i) => i !== index))}
                 >
@@ -145,7 +121,7 @@ export function PolicyEditor({
       )}
 
       {draft ? (
-        <div className="space-y-3 rounded-lg border border-line bg-panel-2/40 p-3">
+        <div className="space-y-3 rounded-xl border border-line bg-panel-2/50 p-3">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-1.5">
               <Label>Tool</Label>

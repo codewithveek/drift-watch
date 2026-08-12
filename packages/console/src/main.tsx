@@ -1,11 +1,15 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createBrowserRouter, RouterProvider } from 'react-router';
+import '@fontsource-variable/inter';
 import { ApiError } from './api.ts';
 import { loadFleetSummary } from './lib/fleet.ts';
+import type { RouteHandle } from './components/app-header.tsx';
 import { RootErrorBoundary, RootLayout } from './routes/root.tsx';
 import { FleetPage } from './routes/fleet.tsx';
-import { AgentLayout, agentLoader } from './routes/agent.tsx';
+import { ApprovalsPage } from './routes/approvals.tsx';
+import { ActivityPage, activityLoader } from './routes/activity.tsx';
+import { AgentLayout, agentLoader, type AgentLoaderData } from './routes/agent.tsx';
 import { AgentOverviewPage, overviewLoader } from './routes/agent.overview.tsx';
 import { AgentApprovalsPage, approvalsLoader } from './routes/agent.approvals.tsx';
 import { AgentConfigPage, configLoader } from './routes/agent.config.tsx';
@@ -33,56 +37,82 @@ function withErrorResponses<Args, Result>(
   };
 }
 
-const router = createBrowserRouter([
+/** Static breadcrumb label for routes whose crumb never depends on data. */
+const staticCrumb = (label: string): RouteHandle => ({ crumb: () => ({ label }) });
+
+const router = createBrowserRouter(
+  [
+    {
+      id: 'root',
+      path: '/',
+      element: <RootLayout />,
+      errorElement: <RootErrorBoundary />,
+      // The fleet summary powers the overview, the fleet-wide approvals queue
+      // and the sidebar's pending badge, so it is loaded once here rather than
+      // three times.
+      loader: withErrorResponses(loadFleetSummary),
+      children: [
+        { index: true, element: <FleetPage />, handle: staticCrumb('Overview') },
+        { path: 'approvals', element: <ApprovalsPage />, handle: staticCrumb('Approvals') },
+        {
+          id: 'activity',
+          path: 'activity',
+          element: <ActivityPage />,
+          loader: withErrorResponses(activityLoader),
+          handle: staticCrumb('Activity'),
+        },
+        {
+          id: 'agent',
+          path: 'agents/:agentId',
+          element: <AgentLayout />,
+          loader: withErrorResponses(agentLoader),
+          // The one crumb that has to read loader data: an id in the trail
+          // would be correct and useless.
+          handle: {
+            crumb: (data) => ({
+              label: (data as AgentLoaderData | undefined)?.definition.name ?? 'Agent',
+            }),
+          } satisfies RouteHandle,
+          children: [
+            {
+              id: 'agent-overview',
+              index: true,
+              element: <AgentOverviewPage />,
+              loader: withErrorResponses(overviewLoader),
+              handle: staticCrumb('Overview'),
+            },
+            {
+              id: 'agent-approvals',
+              path: 'approvals',
+              element: <AgentApprovalsPage />,
+              loader: withErrorResponses(approvalsLoader),
+              handle: staticCrumb('Approvals'),
+            },
+            {
+              id: 'agent-config',
+              path: 'config',
+              element: <AgentConfigPage />,
+              loader: withErrorResponses(configLoader),
+              handle: staticCrumb('Config'),
+            },
+            {
+              id: 'agent-audit',
+              path: 'audit',
+              element: <AgentAuditPage />,
+              loader: withErrorResponses(auditLoader),
+              handle: staticCrumb('Audit'),
+            },
+          ],
+        },
+      ],
+    },
+  ],
   {
-    id: 'root',
-    path: '/',
-    element: <RootLayout />,
-    errorElement: <RootErrorBoundary />,
-    // The fleet summary powers both the landing page and the top bar's
-    // fleet-wide pending badge, so it is loaded once here rather than twice.
-    loader: withErrorResponses(loadFleetSummary),
-    children: [
-      { index: true, element: <FleetPage /> },
-      {
-        id: 'agent',
-        path: 'agents/:agentId',
-        element: <AgentLayout />,
-        loader: withErrorResponses(agentLoader),
-        children: [
-          {
-            id: 'agent-overview',
-            index: true,
-            element: <AgentOverviewPage />,
-            loader: withErrorResponses(overviewLoader),
-          },
-          {
-            id: 'agent-approvals',
-            path: 'approvals',
-            element: <AgentApprovalsPage />,
-            loader: withErrorResponses(approvalsLoader),
-          },
-          {
-            id: 'agent-config',
-            path: 'config',
-            element: <AgentConfigPage />,
-            loader: withErrorResponses(configLoader),
-          },
-          {
-            id: 'agent-audit',
-            path: 'audit',
-            element: <AgentAuditPage />,
-            loader: withErrorResponses(auditLoader),
-          },
-        ],
-      },
-    ],
+    // Single-sourced from Vite's `base`. Hardcoding '/console' in a second place
+    // is how the preview build silently breaks.
+    basename: import.meta.env.BASE_URL,
   },
-], {
-  // Single-sourced from Vite's `base`. Hardcoding '/console' in a second place
-  // is how the preview build silently breaks.
-  basename: import.meta.env.BASE_URL,
-});
+);
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
