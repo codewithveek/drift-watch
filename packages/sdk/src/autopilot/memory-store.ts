@@ -10,12 +10,21 @@ import type {
   AgentRuntimeState,
   Approval,
   ApprovalStatus,
+  AuditEvent,
   DriftHistoryEntry,
   StateStore,
   ToolCallApproval,
 } from './types.js';
+import type { ApiKeyRecord } from './api-keys.js';
 
 const HISTORY_CAP = 500;
+
+/**
+ * Separate, larger cap than HISTORY_CAP: the audit log is the record you
+ * consult after something went wrong, and it accumulates across the whole
+ * fleet rather than per agent, so it fills far faster.
+ */
+const AUDIT_CAP = 2000;
 
 function defaultAgentState(): AgentRuntimeState {
   return { status: 'running', activeVersion: 1, updatedAt: Date.now() };
@@ -32,6 +41,60 @@ export class MemoryStateStore implements StateStore {
   private readonly actionLog = new Map<string, ActionLogEntry[]>();
   private readonly cooldowns = new Map<string, number>();
   private readonly leaderLocks = new Map<string, number>();
+  private readonly apiKeys = new Map<string, ApiKeyRecord>();
+  /** sha256(token) -> key id. Mirrors the Redis hash index so both stores
+   *  authenticate with one lookup rather than scanning every key. */
+  private readonly apiKeyIdsByHash = new Map<string, string>();
+  private readonly auditEvents: AuditEvent[] = [];
+
+  async createApiKey(record: ApiKeyRecord): Promise<void> {
+    this.apiKeys.set(record.id, { ...record });
+    this.apiKeyIdsByHash.set(record.hash, record.id);
+  }
+
+  async getApiKeyByHash(hash: string): Promise<ApiKeyRecord | undefined> {
+    const id = this.apiKeyIdsByHash.get(hash);
+    return id ? this.getApiKey(id) : undefined;
+  }
+
+  async getApiKey(id: string): Promise<ApiKeyRecord | undefined> {
+    const record = this.apiKeys.get(id);
+    return record ? { ...record } : undefined;
+  }
+
+  async listApiKeys(): Promise<ApiKeyRecord[]> {
+    return Array.from(this.apiKeys.values())
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map((record) => ({ ...record }));
+  }
+
+  async revokeApiKey(id: string, revokedBy: string): Promise<ApiKeyRecord | undefined> {
+    const record = this.apiKeys.get(id);
+    if (!record || record.revokedAt !== undefined) return undefined;
+    const revoked: ApiKeyRecord = { ...record, revokedAt: Date.now(), revokedBy };
+    this.apiKeys.set(id, revoked);
+    // The hash index entry stays: getApiKeyByHash must still resolve a revoked
+    // key so the gate can answer "revoked" rather than "unknown token".
+    return { ...revoked };
+  }
+
+  async touchApiKey(id: string, at: number): Promise<void> {
+    const record = this.apiKeys.get(id);
+    if (!record) return;
+    this.apiKeys.set(id, { ...record, lastUsedAt: at });
+  }
+
+  async recordAuditEvent(event: AuditEvent): Promise<void> {
+    this.auditEvents.unshift({ ...event });
+    if (this.auditEvents.length > AUDIT_CAP) this.auditEvents.length = AUDIT_CAP;
+  }
+
+  async listAuditEvents(limit: number, agentId?: string): Promise<AuditEvent[]> {
+    const source = agentId
+      ? this.auditEvents.filter((event) => event.agentId === agentId)
+      : this.auditEvents;
+    return source.slice(0, limit).map((event) => ({ ...event }));
+  }
 
   async upsertAgent(definition: AgentDefinition): Promise<void> {
     this.agents.set(definition.id, { ...definition });

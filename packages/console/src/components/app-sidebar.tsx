@@ -1,5 +1,13 @@
 import { NavLink, useLocation, useRouteLoaderData } from 'react-router';
-import { Activity, KeyRound, LayoutGrid, Plus, ScrollText, ShieldCheck } from 'lucide-react';
+import {
+  Activity,
+  Fingerprint,
+  KeyRound,
+  LayoutGrid,
+  Plus,
+  ScrollText,
+  ShieldCheck,
+} from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -37,6 +45,7 @@ const CONTROL_CENTER = [
   { to: '/', label: 'Overview', icon: LayoutGrid, exact: true },
   { to: '/approvals', label: 'Approvals', icon: ShieldCheck, exact: false },
   { to: '/activity', label: 'Activity', icon: ScrollText, exact: false },
+  { to: '/settings/api-keys', label: 'API keys', icon: KeyRound, exact: false },
 ] as const;
 
 /**
@@ -154,7 +163,9 @@ export function AppSidebar() {
             <TokenDialog
               trigger={
                 <SidebarMenuButton className="text-ink-3">
-                  <KeyRound />
+                  {/* Fingerprint, not KeyRound: this is "how THIS browser
+                      authenticates", distinct from the API keys page above. */}
+                  <Fingerprint />
                   <span>{tokenConfigured ? 'Token set' : 'No token set'}</span>
                   <span
                     aria-hidden="true"

@@ -80,9 +80,12 @@ export {
   ACTION_TYPES,
   CONTROL_ACTIONS,
   AGENT_ID_PATTERN,
+  AUDIT_ACTIONS,
   generateAgentSlug,
   categorizeAction,
   resolveToolCallPolicies,
+  type AuditAction,
+  type AuditEvent,
   type ActionType,
   type ActionCategory,
   type ActionIntent,
@@ -126,6 +129,22 @@ export {
   type GateToolCallOptions,
   type GateToolCallResult,
 } from './autopilot/tool-call-gate.js';
+export {
+  API_KEY_SCOPES,
+  API_KEY_SCOPE_DESCRIPTIONS,
+  API_KEY_TOKEN_PREFIX,
+  API_KEY_TOUCH_INTERVAL_MS,
+  hashApiKeyToken,
+  isApiKeyFleetWide,
+  isApiKeyScope,
+  mintApiKey,
+  toPublicApiKey,
+  type ApiKeyRecord,
+  type ApiKeyScope,
+  type MintApiKeyOptions,
+  type MintedApiKey,
+  type PublicApiKey,
+} from './autopilot/api-keys.js';
 export { MemoryStateStore } from './autopilot/memory-store.js';
 export {
   notifierForAction,

@@ -17,14 +17,24 @@ import type {
   AgentRuntimeState,
   Approval,
   ApprovalStatus,
+  AuditEvent,
   DriftHistoryEntry,
   StateStore,
   ToolCallApproval,
 } from './types.js';
+import type { ApiKeyRecord } from './api-keys.js';
 
 const HISTORY_CAP = 500;
 
+/** See the matching constant in memory-store.ts for why this is separate. */
+const AUDIT_CAP = 2000;
+
 const KEY = {
+  apiKey: (id: string) => `dw:apikey:${id}`,
+  /** sha256(token) -> key id. The authentication index; see api-keys.ts. */
+  apiKeyByHash: (hash: string) => `dw:apikey:hash:${hash}`,
+  apiKeysIndex: 'dw:apikeys',
+  auditLog: 'dw:audit:log',
   agentDef: (agentId: string) => `dw:agent:${agentId}:def`,
   agentsIndex: 'dw:agents',
   agentState: (agentId: string) => `dw:agent:${agentId}:state`,
@@ -95,11 +105,98 @@ redis.call('SREM', 'dw:agent:' .. approval.agentId .. ':toolcall-approvals:pendi
 return updated
 `;
 
+/**
+ * Read-modify-write on one key record, done in Lua for the same reason the
+ * approval scripts are: a plain GET/SET pair from two processes would let a
+ * `touchApiKey` silently resurrect a record a concurrent `revokeApiKey` had
+ * just stamped. ARGV[1] selects the mutation so both operations share one
+ * script rather than duplicating the load-decode-encode-store frame.
+ */
+const MUTATE_API_KEY_LUA = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return '' end
+local record = cjson.decode(raw)
+if ARGV[1] == 'revoke' then
+  if record.revokedAt ~= nil then return '' end
+  record.revokedAt = tonumber(ARGV[2])
+  record.revokedBy = ARGV[3]
+else
+  record.lastUsedAt = tonumber(ARGV[2])
+end
+local updated = cjson.encode(record)
+redis.call('SET', KEYS[1], updated)
+return updated
+`;
+
 export class RedisStateStore implements StateStore {
   private readonly redis: Redis;
 
   constructor(redisUrl: string) {
     this.redis = new Redis(redisUrl, { lazyConnect: false, maxRetriesPerRequest: 3 });
+  }
+
+  async createApiKey(record: ApiKeyRecord): Promise<void> {
+    await this.redis
+      .multi()
+      .set(KEY.apiKey(record.id), JSON.stringify(record))
+      .set(KEY.apiKeyByHash(record.hash), record.id)
+      .sadd(KEY.apiKeysIndex, record.id)
+      .exec();
+  }
+
+  async getApiKeyByHash(hash: string): Promise<ApiKeyRecord | undefined> {
+    const id = await this.redis.get(KEY.apiKeyByHash(hash));
+    return id ? this.getApiKey(id) : undefined;
+  }
+
+  async getApiKey(id: string): Promise<ApiKeyRecord | undefined> {
+    const raw = await this.redis.get(KEY.apiKey(id));
+    return raw ? (JSON.parse(raw) as ApiKeyRecord) : undefined;
+  }
+
+  async listApiKeys(): Promise<ApiKeyRecord[]> {
+    const ids = await this.redis.smembers(KEY.apiKeysIndex);
+    if (ids.length === 0) return [];
+    const raws = await this.redis.mget(ids.map((id) => KEY.apiKey(id)));
+    return raws
+      .filter((raw): raw is string => !!raw)
+      .map((raw) => JSON.parse(raw) as ApiKeyRecord)
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  async revokeApiKey(id: string, revokedBy: string): Promise<ApiKeyRecord | undefined> {
+    // The hash index entry is deliberately left in place — see the matching
+    // comment in memory-store.ts.
+    const result = (await this.redis.eval(
+      MUTATE_API_KEY_LUA,
+      1,
+      KEY.apiKey(id),
+      'revoke',
+      String(Date.now()),
+      revokedBy,
+    )) as string;
+    return result ? (JSON.parse(result) as ApiKeyRecord) : undefined;
+  }
+
+  async touchApiKey(id: string, at: number): Promise<void> {
+    await this.redis.eval(MUTATE_API_KEY_LUA, 1, KEY.apiKey(id), 'touch', String(at), '');
+  }
+
+  async recordAuditEvent(event: AuditEvent): Promise<void> {
+    await this.redis
+      .multi()
+      .lpush(KEY.auditLog, JSON.stringify(event))
+      .ltrim(KEY.auditLog, 0, AUDIT_CAP - 1)
+      .exec();
+  }
+
+  async listAuditEvents(limit: number, agentId?: string): Promise<AuditEvent[]> {
+    // Unfiltered reads take only what they need. A per-agent read has to scan
+    // the capped list, since the log is one fleet-wide stream by design (see
+    // AuditEvent's docblock) — bounded by AUDIT_CAP, not unbounded.
+    const raws = await this.redis.lrange(KEY.auditLog, 0, agentId ? AUDIT_CAP - 1 : limit - 1);
+    const events = raws.map((raw) => JSON.parse(raw) as AuditEvent);
+    return (agentId ? events.filter((event) => event.agentId === agentId) : events).slice(0, limit);
   }
 
   async upsertAgent(definition: AgentDefinition): Promise<void> {

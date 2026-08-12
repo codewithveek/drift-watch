@@ -14,6 +14,7 @@ import { AgentOverviewPage, overviewLoader } from './routes/agent.overview.tsx';
 import { AgentApprovalsPage, approvalsLoader } from './routes/agent.approvals.tsx';
 import { AgentConfigPage, configLoader } from './routes/agent.config.tsx';
 import { AgentAuditPage, auditLoader } from './routes/agent.audit.tsx';
+import { ApiKeysPage, apiKeysLoader } from './routes/settings.api-keys.tsx';
 import './index.css';
 
 /**
@@ -60,6 +61,13 @@ const router = createBrowserRouter(
           element: <ActivityPage />,
           loader: withErrorResponses(activityLoader),
           handle: staticCrumb('Activity'),
+        },
+        {
+          id: 'api-keys',
+          path: 'settings/api-keys',
+          element: <ApiKeysPage />,
+          loader: withErrorResponses(apiKeysLoader),
+          handle: staticCrumb('API keys'),
         },
         {
           id: 'agent',

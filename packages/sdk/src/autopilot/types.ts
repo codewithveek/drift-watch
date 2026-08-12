@@ -19,6 +19,7 @@ import { randomBytes } from 'node:crypto';
 import type { DriftVerdict } from '../drift/detector.js';
 import type { AgentConfig } from '../config/schema.js';
 import type { ToolCallPolicyRule } from './tool-call-policy.js';
+import type { ApiKeyRecord } from './api-keys.js';
 
 /** Every remediation action Autopilot knows how to intend. */
 export const ACTION_TYPES = [
@@ -262,6 +263,50 @@ export interface ActionLogEntry {
   channel?: string;
 }
 
+/**
+ * Every mutation of the control plane worth attributing to a principal.
+ *
+ * Distinct from `ActionLogEntry`, which records what AUTOPILOT decided to do
+ * to one agent (and is per-agent by construction). This is the human/API side:
+ * who changed configuration, who resolved an approval, who minted a key. It is
+ * fleet-wide precisely because the questions it answers ("what did this leaked
+ * key touch?") cross agent boundaries.
+ */
+export const AUDIT_ACTIONS = [
+  'apikey.create',
+  'apikey.revoke',
+  'agent.create',
+  'agent.update',
+  'policy.update',
+  'approval.resolve',
+  'toolcall.resolve',
+  'control.pause',
+  'control.resume',
+  'control.rollback',
+  'drift.scan',
+] as const;
+export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+
+export interface AuditEvent {
+  id: string;
+  at: number;
+  /** Principal id: `root` (AUTH_TOKEN), `local` (dev local-network), or an API key id. */
+  actor: string;
+  /** Human label for that principal — the key's name, or `AUTH_TOKEN`. */
+  actorLabel: string;
+  action: AuditAction;
+  /** The record acted on: an agent id, an API key id, an approval id. */
+  target?: string;
+  /** Set when the event belongs to one agent, so it can be filtered per-agent. */
+  agentId?: string;
+  /**
+   * One-line description. MUST NOT contain secret plaintext — for a change
+   * that touches a secret, name the FIELD that changed, never its before/after
+   * value. See the roadmap note on audit-log diffs.
+   */
+  summary: string;
+}
+
 /** A channel-agnostic notification payload. Rendered per-notifier. */
 export interface NotificationMessage {
   title: string;
@@ -285,8 +330,37 @@ export interface NotificationMessage {
  *     carries that information on the record instead of the method signature.
  *   - `acquireLeaderLock` — stays global. One leader process runs the whole
  *     fleet's drift cycle per tick; this isn't a per-agent concern.
+ *   - the API-key and audit methods — both are fleet-wide by design. A key's
+ *     agent scoping lives on the record (`ApiKeyRecord.agentIds`), not in the
+ *     method signature, for the same reason `Approval.agentId` does: the
+ *     lookup happens before any agent is known.
  */
 export interface StateStore {
+  // --- API keys -------------------------------------------------------------
+  createApiKey(record: ApiKeyRecord): Promise<void>;
+  /**
+   * The authentication hot path: look up by sha256(token). Returns the record
+   * even when revoked/expired — the caller decides (see `isApiKeyUsable`), so
+   * an audit trail can distinguish "unknown token" from "revoked token".
+   */
+  getApiKeyByHash(hash: string): Promise<ApiKeyRecord | undefined>;
+  getApiKey(id: string): Promise<ApiKeyRecord | undefined>;
+  listApiKeys(): Promise<ApiKeyRecord[]>;
+  /**
+   * Soft revoke: stamps `revokedAt`/`revokedBy` and keeps the record, so the
+   * audit trail still resolves the key id to a name long after it stopped
+   * working. Returns undefined if unknown or already revoked (idempotency
+   * guard, same contract as resolveApproval).
+   */
+  revokeApiKey(id: string, revokedBy: string): Promise<ApiKeyRecord | undefined>;
+  /** Best-effort coarse last-use stamp — see API_KEY_TOUCH_INTERVAL_MS. */
+  touchApiKey(id: string, at: number): Promise<void>;
+
+  // --- audit log (fleet-wide) -----------------------------------------------
+  recordAuditEvent(event: AuditEvent): Promise<void>;
+  /** Newest first. `agentId` filters to events scoped to that one agent. */
+  listAuditEvents(limit: number, agentId?: string): Promise<AuditEvent[]>;
+
   // --- agent registry -----------------------------------------------------
   /** Idempotent create-or-update, keyed by `definition.id`. */
   upsertAgent(definition: AgentDefinition): Promise<void>;

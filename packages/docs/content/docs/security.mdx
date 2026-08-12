@@ -5,32 +5,104 @@ description: Auth model, rate limiting, webhook signature verification, telemetr
 
 ## Authentication
 
-`/run` and `/drift` are gated by `isRequestAuthorized` in
-[`routes/auth.ts`](https://github.com/codewithveek/drift-watch/blob/main/packages/server/src/routes/auth.ts):
+Every route goes through one gate, `createAuthGate` in
+[`routes/auth.ts`](https://github.com/codewithveek/drift-watch/blob/main/packages/server/src/routes/auth.ts),
+which resolves the caller to one of three principals:
 
-- **`AUTH_TOKEN` set** — requests must send `Authorization: Bearer <token>`.
-  The comparison uses `crypto.timingSafeEqual` (after an equal-length
-  fast-path check) rather than `===`, so response timing can't be used to
-  recover the token byte by byte.
-- **`AUTH_TOKEN` unset (local-only mode)** — the server refuses everything
-  outside RFC 1918 private ranges: `10.0.0.0/8`, `172.16.0.0/12`,
-  `192.168.0.0/16`, plus loopback. Model calls cost real money, so this
-  prevents accidental anonymous access in production.
+- **`root`** — the flat `AUTH_TOKEN`, sent as `Authorization: Bearer <token>`.
+  Holds every scope over every agent. The comparison uses
+  `crypto.timingSafeEqual` (after an equal-length fast-path check) rather than
+  `===`, so response timing can't be used to recover the token byte by byte.
+  This is the bootstrap credential: it is how the first API key gets minted,
+  and how you recover if the key store is empty.
+- **`api-key`** — a scoped key minted from the console or `POST /api-keys`
+  (see [API keys](#api-keys) below). Works whether or not `AUTH_TOKEN` is set.
+- **`local`** — with `AUTH_TOKEN` unset *and no credential presented*, the
+  server trusts RFC 1918 private ranges (`10.0.0.0/8`, `172.16.0.0/12`,
+  `192.168.0.0/16`, plus loopback) and refuses everything else. Model calls
+  cost real money, so this prevents accidental anonymous access in production.
 
-`request.ip` is what this check keys on, which means **`TRUST_PROXY` must
-be set correctly** — if the server sits behind a reverse proxy and
-`TRUST_PROXY` is unset, `request.ip` is the proxy's address, not the
-client's, which can make the local-network fallback either too permissive
-or too strict depending on where the proxy lives. See
+Presenting a bearer that matches neither `AUTH_TOKEN` nor a live key is a
+**401 even from the local network** — a bad credential is never silently
+downgraded to local trust, because that would make a stale token look like it
+was working while actually being ignored.
+
+`request.ip` is what the local-network path keys on, which means
+**`TRUST_PROXY` must be set correctly** — if the server sits behind a reverse
+proxy and `TRUST_PROXY` is unset, `request.ip` is the proxy's address, not the
+client's, which can make the fallback either too permissive or too strict
+depending on where the proxy lives. See
 [configuration.md](/docs/configuration#server-config--serverconfig).
 
 `/health` is intentionally unauthenticated — it returns `{ ok: true }` and
 nothing else, for load balancer / orchestrator health checks.
 
-The control-plane API (`/state`, `/drift/history`, `/approvals`,
-`/approvals/:id/resolve`, `/actions/log`, `/control/*`, `/drift/scan`) reuses
-this *exact same* `isRequestAuthorized` gate — there is one bearer story for
-the whole control plane, including the React console.
+## API keys
+
+`AUTH_TOKEN` is all-or-nothing. API keys are the scoped alternative: mint one
+per consumer with only the permissions it needs, and revoke it independently.
+Manage them at **`/console/settings/api-keys`**, or over HTTP with
+`GET/POST /api-keys` and `DELETE /api-keys/:id`.
+
+### Scopes
+
+| Scope | Grants |
+| --- | --- |
+| `read` | Every GET: agents, state, drift history, approvals, audit log. |
+| `agent:run` | `POST /run` and `GET /drift` — actually executing the agent. |
+| `approvals:write` | Resolve control approvals (Loop 2) and gated tool calls (Loop 3). |
+| `control:write` | Pause / resume / rollback, and triggering drift scans. |
+| `agents:write` | Register agents and edit identity (name, owner, service name). |
+| `policy:write` | Change guardrails, tool allow-lists, and tool-call policies. |
+| `keys:admin` | Mint and revoke API keys. |
+
+`policy:write` is deliberately split from `agents:write`: loosening a spend cap
+or removing a tool gate is a materially different act from renaming an agent, so
+a deploy key that registers agents cannot also relax the guardrails on one. A
+`PATCH /agents/:agentId` whose body touches `guardrails`, `guardrailsSource`,
+`toolNames`, `toolPolicies` or `toolPoliciesSource` requires **both** scopes.
+
+### Agent scoping
+
+A key may additionally be restricted to specific agents (`agentIds`). Omit it
+for a fleet-wide key. A scoped key:
+
+- gets a **403** on any route for an agent outside its list;
+- sees only its own agents from `GET /agents` (narrowed, not refused — asking
+  "which agents can I see" is a legitimate request);
+- cannot perform fleet-wide operations: registering an agent with a generated
+  id, `POST /drift/scan`, reading the unfiltered `/audit` stream, or anything
+  under `/api-keys`.
+
+### Storage
+
+Tokens are 24 bytes of CSPRNG output prefixed with `dw_`, **shown exactly once**
+in the `POST /api-keys` response and never again. Only `sha256(token)` is
+stored, and that hash is the lookup index — one constant-time map/GET, no scan.
+Deliberately *not* bcrypt/argon2: those are slow salted KDFs built for
+low-entropy human passwords, and their per-record salt would make every lookup
+O(number of keys) with a full KDF run per candidate.
+
+Revocation is a soft delete — the record is kept with `revokedAt`/`revokedBy`
+so past audit entries still resolve the key's id to its name — but access stops
+immediately, and the gate reports `api key revoked` rather than `unauthorized`
+so you can tell a rotated key from a forged one.
+
+A key can never grant scopes its own principal doesn't hold; without that,
+any `keys:admin` key could mint itself a superuser key and every other
+restriction would be decorative.
+
+### Audit trail
+
+Every control-plane mutation records an `AuditEvent` naming the principal
+(`root`, `local`, or the key's id and name), the action, the agent, and a
+summary. Read it at `GET /audit` (fleet-wide, or `?agentId=` for one agent), or
+in the console on **Activity** and each agent's **Audit** tab.
+
+Summaries name the **fields** that changed, never their values — a guardrail
+diff that printed before/after would put secrets into a log any `read`
+principal can fetch. Recording is best-effort: a store failure logs an error
+rather than failing the mutation it describes.
 
 ## Integration webhook authentication
 
@@ -65,8 +137,8 @@ never silently accepts unsigned callbacks.
 `/run` and `/drift` are rate-limited via
 [`@fastify/rate-limit`](https://github.com/fastify/fastify-rate-limit),
 `RATE_LIMIT_MAX` requests per `RATE_LIMIT_WINDOW_MS` per client (default
-30/60s). This exists specifically because a single leaked or shared
-`AUTH_TOKEN` shouldn't translate into unbounded model-provider spend — the
+30/60s). This exists specifically because a single leaked or shared credential
+shouldn't translate into unbounded model-provider spend — the
 body-size cap (`MAX_PROMPT_BYTES`/`BODY_LIMIT`) bounds cost *per request*,
 this bounds it *per unit time*.
 
@@ -129,8 +201,14 @@ off in-flight `/run` calls or drop the final export.
   and Docker-ignored
   ([`.dockerignore`](https://github.com/codewithveek/drift-watch/blob/main/.dockerignore)),
   but rotate anything that leaks.
+- **Durable key storage.** API keys live in the `StateStore`. With `REDIS_URL`
+  set they survive restarts; with the default in-memory store they do **not** —
+  a restart empties the key list and every minted token stops working. That is
+  fine for local development (and `AUTH_TOKEN` still gets you back in), but a
+  deployment issuing real keys wants Redis.
 - **Redis exposure.** When `REDIS_URL` is set it holds pending approvals, the
-  agent state, and the leader lock — put it on a private network and use
+  agent state, the leader lock, and API key hashes — put it on a private
+  network and use
   `rediss://` + auth if it leaves the host. Don't point it at a Redis reachable
   from untrusted clients.
 - **Tool/skill implementations you add.** `withSkillExecutionSpan` traces

@@ -39,6 +39,11 @@ export function loadPolicyConfig(config: ServerConfig): PolicyConfig {
   }
 
   const parsed = PolicyConfigSchema.parse(raw);
-  // Env is authoritative for the operational knobs.
-  return { ...parsed, mode: config.autopilotMode, cooldownMs: config.cooldownMs };
+  // Env is authoritative for the operational knobs. AUTOPILOT_ENABLED=0 forces
+  // shadow regardless of AUTOPILOT_MODE: the scheduler is now always built so
+  // that on-demand scans work (see autopilot/index.ts), and "I turned autopilot
+  // off" must still mean nothing gets executed autonomously — a manual scan
+  // reports the intents it would have run instead of running them.
+  const mode = config.autopilotEnabled ? config.autopilotMode : 'shadow';
+  return { ...parsed, mode, cooldownMs: config.cooldownMs };
 }

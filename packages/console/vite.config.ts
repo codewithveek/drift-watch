@@ -16,6 +16,8 @@ import tailwindcss from '@tailwindcss/vite';
 // index.html — so the fetch succeeds and JSON.parse fails on '<'.
 const API_PATHS = [
   '/agents',
+  '/api-keys',
+  '/audit',
   '/drift',
   '/health',
   '/tools',

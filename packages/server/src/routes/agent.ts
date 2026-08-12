@@ -11,7 +11,7 @@ import {
   type NotifierRegistry,
 } from '@driftwatch/sdk';
 import type { ServerConfig } from '../config/server-config.js';
-import { isRequestAuthorized } from './auth.js';
+import type { AuthorizeFn } from './auth.js';
 import { createMetricsQuerySourceFor } from '../config/metrics-source.js';
 import { buildAgentTools } from '../tools.js';
 
@@ -29,6 +29,8 @@ export interface RegisterRoutesOptions {
   /** How long a pre-execution tool-call approval waits before toolCallApprovalTimeoutDecision applies. */
   toolCallApprovalTimeoutMs: number;
   toolCallApprovalTimeoutDecision: 'approved' | 'rejected';
+  /** Shared scope/agent-aware gate — see routes/auth.ts. */
+  authorize: AuthorizeFn;
 }
 
 /** Thrown when an :agentId route param (or the auto-registered default) isn't registered. */
@@ -51,6 +53,7 @@ export async function registerRoutes(
     notifiers,
     toolCallApprovalTimeoutMs,
     toolCallApprovalTimeoutDecision,
+    authorize,
   } = options;
 
   /**
@@ -167,7 +170,8 @@ export async function registerRoutes(
   // keeps working unmodified. New integrations should use the agentId-scoped
   // route directly.
   fastifyServer.post<{ Body: { prompt: string } }>('/run', runRateLimit, async (request, reply) => {
-    if (!isRequestAuthorized(request, reply, serverConfig.authToken)) return;
+    const requirement = { scope: 'agent:run', agentId: serverConfig.agentId } as const;
+    if (!(await authorize(request, reply, requirement))) return;
     return handleRun(serverConfig.agentId, request.body?.prompt, reply);
   });
 
@@ -175,13 +179,15 @@ export async function registerRoutes(
     '/agents/:agentId/run',
     runRateLimit,
     async (request, reply) => {
-      if (!isRequestAuthorized(request, reply, serverConfig.authToken)) return;
+      const requirement = { scope: 'agent:run', agentId: request.params.agentId } as const;
+      if (!(await authorize(request, reply, requirement))) return;
       return handleRun(request.params.agentId, request.body?.prompt, reply);
     },
   );
 
   fastifyServer.get('/drift', runRateLimit, async (request, reply) => {
-    if (!isRequestAuthorized(request, reply, serverConfig.authToken)) return;
+    const requirement = { scope: 'agent:run', agentId: serverConfig.agentId } as const;
+    if (!(await authorize(request, reply, requirement))) return;
     return handleDrift(serverConfig.agentId, reply, request.log);
   });
 
@@ -189,7 +195,8 @@ export async function registerRoutes(
     '/agents/:agentId/drift',
     runRateLimit,
     async (request, reply) => {
-      if (!isRequestAuthorized(request, reply, serverConfig.authToken)) return;
+      const requirement = { scope: 'agent:run', agentId: request.params.agentId } as const;
+      if (!(await authorize(request, reply, requirement))) return;
       return handleDrift(request.params.agentId, reply, request.log);
     },
   );

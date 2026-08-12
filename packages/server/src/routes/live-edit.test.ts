@@ -1,8 +1,16 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { DriftWatchConfigSchema, MemoryStateStore, ApprovalService, type ModelClient } from '@driftwatch/sdk';
+import {
+  DriftWatchConfigSchema,
+  MemoryStateStore,
+  ApprovalService,
+  type AutopilotScheduler,
+  type ModelClient,
+} from '@driftwatch/sdk';
 import { registerRoutes } from './agent.js';
 import { registerConsoleRoutes } from './console.js';
+import { createAuthGate } from './auth.js';
+import { createAuditRecorder } from './audit.js';
 import { ServerConfigSchema, type ServerConfig } from '../config/server-config.js';
 
 const runAgentTaskMock = vi.fn();
@@ -61,12 +69,16 @@ describe('live edit: PATCH via console routes takes effect on the next /run', ()
       notifiers: { list: [] },
       toolCallApprovalTimeoutMs: 300,
       toolCallApprovalTimeoutDecision: 'rejected',
+      authorize: createAuthGate({ store, authToken: serverConfig.authToken }),
     });
     await registerConsoleRoutes(fastify, {
       store,
       serverConfig,
       driftWatchConfig,
       approvalService,
+      scheduler: {} as AutopilotScheduler, // unused: this file never scans
+      authorize: createAuthGate({ store, authToken: serverConfig.authToken }),
+      recordAudit: createAuditRecorder(store),
     });
     await fastify.ready();
     app = fastify;
@@ -120,8 +132,17 @@ describe('live edit: PATCH via console routes takes effect on the next /run', ()
       notifiers: { list: [] },
       toolCallApprovalTimeoutMs: 300,
       toolCallApprovalTimeoutDecision: 'rejected',
+      authorize: createAuthGate({ store, authToken: serverConfig.authToken }),
     });
-    await registerConsoleRoutes(fastify, { store, serverConfig, driftWatchConfig, approvalService });
+    await registerConsoleRoutes(fastify, {
+      store,
+      serverConfig,
+      driftWatchConfig,
+      approvalService,
+      scheduler: {} as AutopilotScheduler, // unused: this file never scans
+      authorize: createAuthGate({ store, authToken: serverConfig.authToken }),
+      recordAudit: createAuditRecorder(store),
+    });
     await fastify.ready();
     app = fastify;
 

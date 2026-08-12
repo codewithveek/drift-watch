@@ -64,7 +64,7 @@ deliberately.
 | `LOG_LEVEL` | `logLevel` | `info` | Fastify/pino log level. |
 | `BODY_LIMIT` | `bodyLimitBytes` | `131072` (128 KiB) | Hard cap on request body size. |
 | `TRUST_PROXY` | `trustProxy` | `false` (`'1'` → `true`) | Enable when the server sits behind a reverse proxy/load balancer — otherwise `request.ip` and the local-network auth fallback see the proxy's address, not the client's. |
-| `AUTH_TOKEN` | `authToken` | `''` | Bearer token required on `/run` and `/drift`. Empty = local-only mode. See [security.md](/docs/security#authentication). |
+| `AUTH_TOKEN` | `authToken` | `''` | Root bearer token: full access to every route and every agent, and the credential you mint the first API key with. Empty = local-only mode. Scoped [API keys](/docs/security#api-keys) work either way. See [security.md](/docs/security#authentication). |
 | `MAX_PROMPT_BYTES` | `maxPromptBytes` | `8192` | Per-request prompt size cap, independent of `BODY_LIMIT`. |
 | `DRIFT_DRY_RUN` | `driftDryRun` | `false` (`'1'` → `true`) | `/drift` uses built-in fixtures instead of querying Prometheus. |
 | `RATE_LIMIT_MAX` | `rateLimitMax` | `30` | Max requests per client per window on `/run` and `/drift`. |
@@ -98,7 +98,7 @@ The drift-triggered remediation loop and its channels. All server-owned.
 | Env var | Field | Default | Notes |
 |---|---|---|---|
 | `REDIS_URL` | `redisUrl` | `''` | When set, shared state (approvals, agent state, history, leader lock) lives in Redis so multiple processes coordinate. Unset = in-memory single-process store. |
-| `AUTOPILOT_ENABLED` | `autopilotEnabled` | `false` (`'1'` → `true`) | Master switch for the autonomous scheduler. |
+| `AUTOPILOT_ENABLED` | `autopilotEnabled` | `false` (`'1'` → `true`) | Runs the periodic scan loop and lets it act. With `0`, on-demand scans (`POST /drift/scan`, the console's "Scan now") still work but are forced into `shadow` mode — they report the intents they would have run without executing them. |
 | `AUTOPILOT_MODE` | `autopilotMode` | `shadow` | `shadow` logs intended actions only; `enforce` dispatches notifications and queues control actions for approval. |
 | `AUTOPILOT_SCAN_INTERVAL_MS` | `scanIntervalMs` | `60000` | How often the scheduler runs a drift cycle (also the leader-lock TTL). |
 | `AUTOPILOT_COOLDOWN_MS` | `cooldownMs` | `300000` | Dedup window so the same action does not re-fire repeatedly during a burst of drift. |

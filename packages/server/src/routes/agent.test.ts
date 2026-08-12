@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import rateLimit from '@fastify/rate-limit';
 import { DriftWatchConfigSchema, MemoryStateStore, type ModelClient } from '@driftwatch/sdk';
 import { registerRoutes } from './agent.js';
+import { createAuthGate } from './auth.js';
 import type { ServerConfig } from '../config/server-config.js';
 
 const runAgentTaskMock = vi.fn();
@@ -98,6 +99,7 @@ async function buildTestServer(
     notifiers: { list: [] },
     toolCallApprovalTimeoutMs: 300,
     toolCallApprovalTimeoutDecision: 'rejected',
+    authorize: createAuthGate({ store, authToken: serverConfig.authToken }),
   });
   await fastifyServer.ready();
   currentServer = fastifyServer;

@@ -1,7 +1,15 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { DriftWatchConfigSchema, MemoryStateStore, ApprovalService } from '@driftwatch/sdk';
+import {
+  DriftWatchConfigSchema,
+  MemoryStateStore,
+  ApprovalService,
+  type AgentCycleResult,
+  type AutopilotScheduler,
+} from '@driftwatch/sdk';
 import { registerConsoleRoutes } from './console.js';
+import { createAuthGate } from './auth.js';
+import { createAuditRecorder } from './audit.js';
 import { ServerConfigSchema, type ServerConfig } from '../config/server-config.js';
 
 let app: FastifyInstance | undefined;
@@ -10,7 +18,29 @@ function buildServerConfig(overrides: Partial<ServerConfig> = {}): ServerConfig 
   return ServerConfigSchema.parse({ ...overrides });
 }
 
-async function buildApp(config: ServerConfig = buildServerConfig()) {
+/**
+ * Only the two entry points the console routes call. A real AutopilotScheduler
+ * would drag in a model client and a metrics source for tests that are about
+ * routing and authorization, not drift detection.
+ */
+function buildStubScheduler(overrides: Partial<AutopilotScheduler> = {}): AutopilotScheduler {
+  return {
+    async runCycleForAgent(agentId: string): Promise<AgentCycleResult> {
+      return { agentId, intents: [] };
+    },
+    async runCycle() {
+      return { results: [] as AgentCycleResult[] };
+    },
+    start() {},
+    stop() {},
+    ...overrides,
+  } as unknown as AutopilotScheduler;
+}
+
+async function buildApp(
+  config: ServerConfig = buildServerConfig(),
+  options: { scheduler?: AutopilotScheduler } = {},
+) {
   const store = new MemoryStateStore();
   const approvalService = new ApprovalService({
     store,
@@ -24,6 +54,9 @@ async function buildApp(config: ServerConfig = buildServerConfig()) {
     serverConfig: config,
     driftWatchConfig: DriftWatchConfigSchema.parse({}),
     approvalService,
+    scheduler: options.scheduler ?? buildStubScheduler(),
+    authorize: createAuthGate({ store, authToken: config.authToken }),
+    recordAudit: createAuditRecorder(store),
   });
   await fastify.ready();
   app = fastify;
@@ -656,15 +689,37 @@ describe('cross-agent isolation', () => {
   });
 });
 
-describe('drift scans without a scheduler', () => {
-  it('returns 503 for both the single-agent and fleet-wide scan routes', async () => {
-    const { fastify, store } = await buildApp();
+describe('manual drift scans with autopilot disabled', () => {
+  it('scans on demand instead of 503ing — the scheduler is always constructed', async () => {
+    // Regression: AUTOPILOT_ENABLED defaults to 0 in every compose file, and
+    // the scheduler used to be built only when it was 1 — so the console's
+    // always-enabled "Scan now" button 503'd on a default deployment. The flag
+    // now gates only the periodic loop; see autopilot/index.ts.
+    const { fastify, store } = await buildApp(buildServerConfig({ autopilotEnabled: false }));
     await store.upsertAgent({ id: 'agent-1', name: 'Agent One', createdAt: 1 });
 
     const scoped = await fastify.inject({ method: 'POST', url: '/agents/agent-1/drift/scan' });
-    expect(scoped.statusCode).toBe(503);
+    expect(scoped.statusCode).toBe(200);
 
     const fleetWide = await fastify.inject({ method: 'POST', url: '/drift/scan' });
-    expect(fleetWide.statusCode).toBe(503);
+    expect(fleetWide.statusCode).toBe(200);
+  });
+
+  it('still 503s the per-agent scan when that agent has drift detection off', async () => {
+    const { fastify, store } = await buildApp(
+      buildServerConfig(),
+      {
+        scheduler: buildStubScheduler({
+          async runCycleForAgent(agentId: string) {
+            return { agentId, intents: [], skipped: 'disabled' as const };
+          },
+        }),
+      },
+    );
+    await store.upsertAgent({ id: 'agent-1', name: 'Agent One', createdAt: 1 });
+
+    const response = await fastify.inject({ method: 'POST', url: '/agents/agent-1/drift/scan' });
+    expect(response.statusCode).toBe(503);
+    expect(response.json().error).toContain('drift detection disabled');
   });
 });

@@ -23,9 +23,13 @@ import type {
   AgentDefinition,
   AgentRuntimeState,
   AgentStatus,
+  ApiKeyScope,
   Approval,
+  AuditAction,
+  AuditEvent,
   DriftHistoryEntry,
   DriftSeverity,
+  PublicApiKey,
   ToolCallApproval,
   ToolCallPolicyRule,
 } from '@driftwatch/sdk';
@@ -36,9 +40,13 @@ export type {
   AgentDefinition,
   AgentRuntimeState,
   AgentStatus,
+  ApiKeyScope,
   Approval,
+  AuditAction,
+  AuditEvent,
   DriftHistoryEntry,
   DriftSeverity,
+  PublicApiKey,
   ToolCallApproval,
   ToolCallPolicyRule,
 };
@@ -77,6 +85,36 @@ export interface DriftVerdict {
   severity: DriftSeverity;
   reasons: string[];
   recommended_action: string;
+}
+
+/**
+ * GET /api-keys. The scope catalogue is served rather than hardcoded here —
+ * the SDK's runtime entry pulls in OpenTelemetry, so this package can only
+ * import SDK *types*, never the `API_KEY_SCOPES` value itself.
+ */
+export interface ApiKeysResponse {
+  keys: PublicApiKey[];
+  scopes: { name: ApiKeyScope; description: string }[];
+}
+
+/**
+ * POST /api-keys. `token` is the plaintext credential and is returned exactly
+ * once, by this response, and never again — the server stores only its
+ * sha256. Everything that displays it must treat closing the dialog as
+ * destroying it.
+ */
+export interface CreatedApiKey {
+  key: PublicApiKey;
+  token: string;
+}
+
+export interface CreateApiKeyRequest {
+  name: string;
+  scopes: ApiKeyScope[];
+  /** Omit or leave empty for a fleet-wide key. */
+  agentIds?: string[];
+  /** Epoch ms. Omit for a key that never expires. */
+  expiresAt?: number;
 }
 
 const TOKEN_KEY = 'driftwatch.token';
@@ -132,6 +170,10 @@ function post<T>(path: string, body?: unknown): Promise<T> {
   });
 }
 
+function del<T>(path: string): Promise<T> {
+  return api<T>(path, { method: 'DELETE' });
+}
+
 export const client = {
   // --- fleet ---------------------------------------------------------------
   getAgents: () => api<{ agents: AgentDefinition[] }>('/agents'),
@@ -170,6 +212,18 @@ export const client = {
       decision,
       actor: 'console',
     }),
+
+  // --- api keys -------------------------------------------------------------
+  // All three need the `keys:admin` scope AND a fleet-wide principal, so an
+  // agent-scoped key gets a 403 here rather than a filtered list.
+  getApiKeys: () => api<ApiKeysResponse>('/api-keys'),
+  createApiKey: (body: CreateApiKeyRequest) => post<CreatedApiKey>('/api-keys', body),
+  revokeApiKey: (id: string) => del<{ key: PublicApiKey }>(`/api-keys/${id}`),
+
+  // --- audit trail ----------------------------------------------------------
+  /** Fleet-wide by default; pass an agentId to scope it (required for scoped keys). */
+  getAuditEvents: (agentId?: string) =>
+    api<{ events: AuditEvent[] }>(agentId ? `/audit?agentId=${agentId}` : '/audit'),
 
   // --- control actions ------------------------------------------------------
   control: (agentId: string, action: 'pause' | 'resume' | 'rollback') =>

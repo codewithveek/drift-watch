@@ -10,8 +10,11 @@ import rateLimit from '@fastify/rate-limit';
 import { assertModelClientIsConfigured, loadDriftWatchConfigFromEnv } from '@driftwatch/sdk';
 import { registerRoutes } from './routes/agent.js';
 import { registerConsoleRoutes } from './routes/console.js';
+import { registerApiKeyRoutes } from './routes/api-keys.js';
 import { registerIntegrationRoutes } from './routes/integrations.js';
 import { registerConsoleStatic } from './routes/static-console.js';
+import { createAuthGate } from './routes/auth.js';
+import { createAuditRecorder } from './routes/audit.js';
 import { loadServerConfigFromEnv } from './config/server-config.js';
 import { modelClient, modelRegistry } from './config/model-client.js';
 import { createAutopilot } from './autopilot/index.js';
@@ -42,6 +45,11 @@ const autopilot = await createAutopilot({
   logger: fastifyServer.log,
 });
 
+// One gate and one audit recorder shared by every route module, so scope
+// enforcement and attribution can't diverge between them.
+const authorize = createAuthGate({ store: autopilot.store, authToken: serverConfig.authToken });
+const recordAudit = createAuditRecorder(autopilot.store);
+
 await registerRoutes(fastifyServer, {
   modelClient,
   modelRegistry,
@@ -51,6 +59,7 @@ await registerRoutes(fastifyServer, {
   notifiers: autopilot.notifiers,
   toolCallApprovalTimeoutMs: serverConfig.toolCallApprovalTimeoutMs,
   toolCallApprovalTimeoutDecision: serverConfig.toolCallApprovalTimeoutDecision,
+  authorize,
 });
 await registerConsoleRoutes(fastifyServer, {
   store: autopilot.store,
@@ -58,6 +67,13 @@ await registerConsoleRoutes(fastifyServer, {
   driftWatchConfig,
   approvalService: autopilot.approvalService,
   scheduler: autopilot.scheduler,
+  authorize,
+  recordAudit,
+});
+await registerApiKeyRoutes(fastifyServer, {
+  store: autopilot.store,
+  authorize,
+  recordAudit,
 });
 await registerIntegrationRoutes(fastifyServer, {
   approvalService: autopilot.approvalService,
@@ -80,7 +96,9 @@ try {
     host: serverConfig.host,
   });
   fastifyServer.log.info(`DriftWatch listening on ${listeningAddress}`);
-  autopilot.scheduler?.start();
+  // Only the PERIODIC scan loop is gated on the flag — the scheduler itself is
+  // always constructed so /drift/scan works either way.
+  if (serverConfig.autopilotEnabled) autopilot.scheduler.start();
 } catch (error) {
   fastifyServer.log.error(error);
   process.exit(1);

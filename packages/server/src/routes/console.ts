@@ -1,16 +1,21 @@
 /**
  * Control-plane API — the bearer-gated surface the React console (and any
- * operator script) talks to. Reuses the exact same isRequestAuthorized gate as
- * /run and /drift, so there is one auth story for the whole control plane.
+ * operator script) talks to. Every route goes through the same `authorize`
+ * gate as /run and /drift (routes/auth.ts), declaring the scope it needs and
+ * the agent it touches, so there is one auth story for the whole control
+ * plane and an agent-scoped key physically cannot reach another agent.
  *
  * Everything here reads/writes the SHARED StateStore, so the console, Slack,
  * and Telegram always see the same truth. Every route except /agents itself
- * (list + register) and /tools is scoped to one agent via an :agentId path
- * param, and 404s early if that agent isn't registered — see requireAgent
+ * (list + register), /tools and /audit is scoped to one agent via an :agentId
+ * path param, and 404s early if that agent isn't registered — see requireAgent
  * below. Guardrails/tools are resolved fresh from the AgentDefinition on
  * every request (see resolveAgentConfig/buildAgentTools in routes/agent.ts),
  * so a PATCH here takes effect on the very next /run call — no restart, no
  * polling, no cache to invalidate.
+ *
+ * Mutations record an AuditEvent naming the principal and the fields touched
+ * (never their values) — see routes/audit.ts.
  */
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type {
@@ -30,18 +35,25 @@ import {
   resolveToolCallPolicies,
 } from '@driftwatch/sdk';
 import type { ServerConfig } from '../config/server-config.js';
-import { isRequestAuthorized } from './auth.js';
+import { visibleToPrincipal, type AuthorizeFn } from './auth.js';
+import { describeChangedFields, touchesPolicy, type AuditRecorder } from './audit.js';
 import { allToolMetadata, allToolNames } from '../tools.js';
 
 const HISTORY_LIMIT = 100;
+const AUDIT_LIMIT = 200;
 
 export interface RegisterConsoleRoutesOptions {
   store: StateStore;
   serverConfig: ServerConfig;
   driftWatchConfig: DriftWatchConfig;
   approvalService: ApprovalService;
-  /** Present only when autopilot is enabled; gates the manual scan trigger. */
-  scheduler?: AutopilotScheduler;
+  authorize: AuthorizeFn;
+  recordAudit: AuditRecorder;
+  /**
+   * Always present. AUTOPILOT_ENABLED governs the periodic scan loop, not
+   * whether on-demand scans exist — see autopilot/index.ts.
+   */
+  scheduler: AutopilotScheduler;
 }
 
 /** Looks up an agent, 404ing (and returning undefined) if it isn't registered. */
@@ -124,19 +136,32 @@ export async function registerConsoleRoutes(
   options: RegisterConsoleRoutesOptions,
 ): Promise<void> {
   const { store, serverConfig, driftWatchConfig, approvalService, scheduler } = options;
-  const authToken = serverConfig.authToken;
+  const { authorize, recordAudit } = options;
 
   // --- agent registry -------------------------------------------------------
 
   fastifyServer.get('/agents', async (request, reply) => {
-    if (!isRequestAuthorized(request, reply, authToken)) return;
-    return { agents: await store.listAgents() };
+    const principal = await authorize(request, reply, { scope: 'read' });
+    if (!principal) return;
+    // Narrowed rather than 403'd: an agent-scoped key listing the fleet is a
+    // legitimate request for "the agents I can see", not an access violation.
+    return { agents: visibleToPrincipal(principal, await store.listAgents()) };
   });
 
   fastifyServer.post<{ Body: AgentWriteBody }>('/agents', async (request, reply) => {
-    if (!isRequestAuthorized(request, reply, authToken)) return;
-
     const body = request.body ?? {};
+    // Without an explicit id the server generates a slug, which an agent-scoped
+    // key could never have been granted in advance — so creating one is a
+    // fleet-wide act. With an explicit id it's a normal per-agent resource check
+    // (and doubles as the upsert path for re-registering an agent you hold).
+    const principal = await authorize(request, reply, {
+      scope: touchesPolicy(body as Record<string, unknown>)
+        ? ['agents:write', 'policy:write']
+        : 'agents:write',
+      ...(body.id ? { agentId: body.id } : { fleetWide: true }),
+    });
+    if (!principal) return;
+
     const {
       name,
       owner,
@@ -182,11 +207,25 @@ export async function registerConsoleRoutes(
       createdAt: existing?.createdAt ?? Date.now(),
     };
     await store.upsertAgent(definition);
+    await recordAudit(
+      principal,
+      {
+        action: existing ? 'agent.update' : 'agent.create',
+        target: id,
+        agentId: id,
+        summary: `${existing ? 're-registered' : 'registered'} agent "${name}" with ${describeChangedFields(body as Record<string, unknown>)}`,
+      },
+      request.log,
+    );
     return reply.code(existing ? 200 : 201).send({ agent: definition });
   });
 
   fastifyServer.get<{ Params: { agentId: string } }>('/agents/:agentId', async (request, reply) => {
-    if (!isRequestAuthorized(request, reply, authToken)) return;
+    const principal = await authorize(request, reply, {
+      scope: 'read',
+      agentId: request.params.agentId,
+    });
+    if (!principal) return;
     const agent = await requireAgent(store, request.params.agentId, reply);
     if (!agent) return;
     // Raw, unresolved definition — for populating an edit form. /state below
@@ -199,11 +238,19 @@ export async function registerConsoleRoutes(
   fastifyServer.patch<{ Params: { agentId: string }; Body: AgentWriteBody }>(
     '/agents/:agentId',
     async (request, reply) => {
-      if (!isRequestAuthorized(request, reply, authToken)) return;
+      const body = request.body ?? {};
+      // Identity edits need agents:write; anything governing spend or tool
+      // access additionally needs policy:write.
+      const principal = await authorize(request, reply, {
+        scope: touchesPolicy(body as Record<string, unknown>)
+          ? ['agents:write', 'policy:write']
+          : 'agents:write',
+        agentId: request.params.agentId,
+      });
+      if (!principal) return;
       const agent = await requireAgent(store, request.params.agentId, reply);
       if (!agent) return;
 
-      const body = request.body ?? {};
       if (!validateToolNames(body.toolNames, reply)) return;
       if (!validateToolPolicies(body.toolPolicies, reply)) return;
       if (
@@ -246,12 +293,25 @@ export async function registerConsoleRoutes(
         ...(body.toolPoliciesSource !== undefined ? { toolPoliciesSource: body.toolPoliciesSource } : {}),
       };
       await store.upsertAgent(updated);
+      const changedFields = describeChangedFields(body as Record<string, unknown>);
+      await recordAudit(
+        principal,
+        {
+          // Field NAMES only — a guardrail diff that printed values could put a
+          // secret into a log any `read` principal can fetch.
+          action: touchesPolicy(body as Record<string, unknown>) ? 'policy.update' : 'agent.update',
+          target: agent.id,
+          agentId: agent.id,
+          summary: `updated ${changedFields}`,
+        },
+        request.log,
+      );
       return { agent: updated };
     },
   );
 
   fastifyServer.get('/tools', async (request, reply) => {
-    if (!isRequestAuthorized(request, reply, authToken)) return;
+    if (!(await authorize(request, reply, { scope: 'read' }))) return;
     // Full metadata, not just names: the console's policy editor needs each
     // tool's matchable fields before it can offer a rule against one.
     return { tools: allToolMetadata };
@@ -262,7 +322,8 @@ export async function registerConsoleRoutes(
   fastifyServer.get<{ Params: { agentId: string } }>(
     '/agents/:agentId/state',
     async (request, reply) => {
-      if (!isRequestAuthorized(request, reply, authToken)) return;
+      if (!(await authorize(request, reply, { scope: 'read', agentId: request.params.agentId })))
+        return;
       const agent = await requireAgent(store, request.params.agentId, reply);
       if (!agent) return;
       const sourceAgent = agent.guardrailsSource
@@ -291,7 +352,8 @@ export async function registerConsoleRoutes(
   fastifyServer.get<{ Params: { agentId: string } }>(
     '/agents/:agentId/drift/history',
     async (request, reply) => {
-      if (!isRequestAuthorized(request, reply, authToken)) return;
+      if (!(await authorize(request, reply, { scope: 'read', agentId: request.params.agentId })))
+        return;
       const agent = await requireAgent(store, request.params.agentId, reply);
       if (!agent) return;
       return { history: await store.listDriftHistory(agent.id, HISTORY_LIMIT) };
@@ -301,7 +363,8 @@ export async function registerConsoleRoutes(
   fastifyServer.get<{ Params: { agentId: string } }>(
     '/agents/:agentId/approvals',
     async (request, reply) => {
-      if (!isRequestAuthorized(request, reply, authToken)) return;
+      if (!(await authorize(request, reply, { scope: 'read', agentId: request.params.agentId })))
+        return;
       const agent = await requireAgent(store, request.params.agentId, reply);
       if (!agent) return;
       return { approvals: await store.listPendingApprovals(agent.id) };
@@ -312,7 +375,11 @@ export async function registerConsoleRoutes(
     Params: { agentId: string; id: string };
     Body: { decision?: string; actor?: string };
   }>('/agents/:agentId/approvals/:id/resolve', async (request, reply) => {
-    if (!isRequestAuthorized(request, reply, authToken)) return;
+    const principal = await authorize(request, reply, {
+      scope: 'approvals:write',
+      agentId: request.params.agentId,
+    });
+    if (!principal) return;
     const agent = await requireAgent(store, request.params.agentId, reply);
     if (!agent) return;
 
@@ -336,13 +403,24 @@ export async function registerConsoleRoutes(
     if (!resolved) {
       return reply.code(409).send({ error: 'approval missing or already resolved' });
     }
+    await recordAudit(
+      principal,
+      {
+        action: 'approval.resolve',
+        target: resolved.id,
+        agentId: agent.id,
+        summary: `${decision} ${resolved.action} approval (${resolved.severity} severity) as "${actor}"`,
+      },
+      request.log,
+    );
     return { approval: resolved };
   });
 
   fastifyServer.get<{ Params: { agentId: string } }>(
     '/agents/:agentId/tool-calls/pending',
     async (request, reply) => {
-      if (!isRequestAuthorized(request, reply, authToken)) return;
+      if (!(await authorize(request, reply, { scope: 'read', agentId: request.params.agentId })))
+        return;
       const agent = await requireAgent(store, request.params.agentId, reply);
       if (!agent) return;
       return { toolCalls: await store.listPendingToolCallApprovals(agent.id) };
@@ -353,7 +431,11 @@ export async function registerConsoleRoutes(
     Params: { agentId: string; id: string };
     Body: { decision?: string; actor?: string };
   }>('/agents/:agentId/tool-calls/:id/resolve', async (request, reply) => {
-    if (!isRequestAuthorized(request, reply, authToken)) return;
+    const principal = await authorize(request, reply, {
+      scope: 'approvals:write',
+      agentId: request.params.agentId,
+    });
+    if (!principal) return;
     const agent = await requireAgent(store, request.params.agentId, reply);
     if (!agent) return;
 
@@ -377,35 +459,93 @@ export async function registerConsoleRoutes(
     if (!resolved) {
       return reply.code(409).send({ error: 'tool-call approval missing or already resolved' });
     }
+    await recordAudit(
+      principal,
+      {
+        action: 'toolcall.resolve',
+        target: resolved.id,
+        agentId: agent.id,
+        // The tool NAME, never inputSummary — that's the captured payload the
+        // gate exists to protect.
+        summary: `${decision} tool call "${resolved.tool}" as "${actor}"`,
+      },
+      request.log,
+    );
     return { toolCall: resolved };
   });
 
   fastifyServer.get<{ Params: { agentId: string } }>(
     '/agents/:agentId/actions/log',
     async (request, reply) => {
-      if (!isRequestAuthorized(request, reply, authToken)) return;
+      if (!(await authorize(request, reply, { scope: 'read', agentId: request.params.agentId })))
+        return;
       const agent = await requireAgent(store, request.params.agentId, reply);
       if (!agent) return;
       return { log: await store.listActionLog(agent.id, HISTORY_LIMIT) };
     },
   );
 
+  /**
+   * The fleet-wide audit log — who changed what. Distinct from
+   * /agents/:id/actions/log, which is what AUTOPILOT did to one agent.
+   * Unfiltered it spans every agent, so an agent-scoped key must ask for its
+   * own agent explicitly rather than being handed the whole stream.
+   */
+  fastifyServer.get<{ Querystring: { agentId?: string; limit?: string } }>(
+    '/audit',
+    async (request, reply) => {
+      const agentId = request.query.agentId;
+      const principal = await authorize(
+        request,
+        reply,
+        agentId ? { scope: 'read', agentId } : { scope: 'read', fleetWide: true },
+      );
+      if (!principal) return;
+
+      const requestedLimit = Number(request.query.limit);
+      const limit =
+        Number.isFinite(requestedLimit) && requestedLimit > 0
+          ? Math.min(requestedLimit, AUDIT_LIMIT)
+          : AUDIT_LIMIT;
+      return { events: await store.listAuditEvents(limit, agentId) };
+    },
+  );
+
   // Manual control actions from the console. These bypass approval by design —
   // an operator clicking a button in the bearer-gated console IS the human.
   const controlActions = { pause: 'pause_agent', resume: 'resume_agent', rollback: 'rollback' } as const;
+  const controlAuditActions = {
+    pause: 'control.pause',
+    resume: 'control.resume',
+    rollback: 'control.rollback',
+  } as const;
   for (const [route, action] of Object.entries(controlActions)) {
     fastifyServer.post<{ Params: { agentId: string } }>(
       `/agents/:agentId/control/${route}`,
       async (request, reply) => {
-        if (!isRequestAuthorized(request, reply, authToken)) return;
+        const principal = await authorize(request, reply, {
+          scope: 'control:write',
+          agentId: request.params.agentId,
+        });
+        if (!principal) return;
         const agent = await requireAgent(store, request.params.agentId, reply);
         if (!agent) return;
         const result = await executeControlAction(store, agent.id, action, {
           reason: `manual ${route} from console`,
-          actor: 'console',
+          actor: principal.label,
           channel: 'console',
           serviceName: agent.serviceName,
         });
+        await recordAudit(
+          principal,
+          {
+            action: controlAuditActions[route as keyof typeof controlAuditActions],
+            target: agent.id,
+            agentId: agent.id,
+            summary: `manual ${route}${result.applied ? '' : ' (no-op, already in that state)'}`,
+          },
+          request.log,
+        );
         return { applied: result.applied, state: result.state };
       },
     );
@@ -416,10 +556,11 @@ export async function registerConsoleRoutes(
   fastifyServer.post<{ Params: { agentId: string } }>(
     '/agents/:agentId/drift/scan',
     async (request, reply) => {
-      if (!isRequestAuthorized(request, reply, authToken)) return;
-      if (!scheduler) {
-        return reply.code(503).send({ error: 'autopilot disabled; scan unavailable' });
-      }
+      const principal = await authorize(request, reply, {
+        scope: 'control:write',
+        agentId: request.params.agentId,
+      });
+      if (!principal) return;
       const agent = await requireAgent(store, request.params.agentId, reply);
       if (!agent) return;
       try {
@@ -432,6 +573,20 @@ export async function registerConsoleRoutes(
             .code(503)
             .send({ error: 'agent has no metrics source configured; drift detection skipped' });
         }
+        await recordAudit(
+          principal,
+          {
+            action: 'drift.scan',
+            target: agent.id,
+            agentId: agent.id,
+            summary: `manual drift scan: ${
+              result.report?.verdict
+                ? `${result.report.verdict.severity} severity, ${result.intents.length} intent(s)`
+                : 'no verdict'
+            }`,
+          },
+          request.log,
+        );
         return { verdict: result.report?.verdict, intents: result.intents };
       } catch (error) {
         request.log.error({ error }, 'manual drift scan failed');
@@ -441,12 +596,18 @@ export async function registerConsoleRoutes(
   );
 
   fastifyServer.post('/drift/scan', async (request, reply) => {
-    if (!isRequestAuthorized(request, reply, authToken)) return;
-    if (!scheduler) {
-      return reply.code(503).send({ error: 'autopilot disabled; scan unavailable' });
-    }
+    const principal = await authorize(request, reply, {
+      scope: 'control:write',
+      fleetWide: true,
+    });
+    if (!principal) return;
     try {
       const { results } = await scheduler.runCycle('manual');
+      await recordAudit(
+        principal,
+        { action: 'drift.scan', summary: `manual fleet scan across ${results.length} agent(s)` },
+        request.log,
+      );
       return { results };
     } catch (error) {
       request.log.error({ error }, 'manual fleet drift scan failed');

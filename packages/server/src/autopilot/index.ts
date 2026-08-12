@@ -24,8 +24,16 @@ export interface Autopilot {
   store: StateStore;
   notifiers: NotifierRegistry;
   approvalService: ApprovalService;
-  /** Only present when AUTOPILOT_ENABLED=1. */
-  scheduler?: AutopilotScheduler;
+  /**
+   * Always constructed, even with AUTOPILOT_ENABLED=0. That flag governs
+   * whether the PERIODIC scan timer runs (see `start()` in server.ts), not
+   * whether on-demand scanning exists — an operator pressing "Scan now" is
+   * asking for a verdict, which is exactly what someone who has opted out of
+   * autonomous remediation still wants. When autopilot is off the policy
+   * config is forced to shadow mode (see loadPolicyConfig), so a manual scan
+   * reports what it WOULD do without doing it.
+   */
+  scheduler: AutopilotScheduler;
   /** Ordered teardown: stop timers, then close the store. */
   shutdown(): Promise<void>;
 }
@@ -65,22 +73,19 @@ export async function createAutopilot(options: {
     logger,
   });
 
-  let scheduler: AutopilotScheduler | undefined;
-  if (serverConfig.autopilotEnabled) {
-    scheduler = new AutopilotScheduler({
-      store,
-      notifiers,
-      approvalService,
-      modelClient,
-      policyConfig: loadPolicyConfig(serverConfig),
-      metricsQuerySourceFor: (agent) =>
-        createMetricsQuerySourceFor(driftWatchConfig.driftDetection, agent),
-      isDryRun: serverConfig.driftDryRun,
-      scanIntervalMs: serverConfig.scanIntervalMs,
-      cooldownMs: serverConfig.cooldownMs,
-      logger,
-    });
-  }
+  const scheduler = new AutopilotScheduler({
+    store,
+    notifiers,
+    approvalService,
+    modelClient,
+    policyConfig: loadPolicyConfig(serverConfig),
+    metricsQuerySourceFor: (agent) =>
+      createMetricsQuerySourceFor(driftWatchConfig.driftDetection, agent),
+    isDryRun: serverConfig.driftDryRun,
+    scanIntervalMs: serverConfig.scanIntervalMs,
+    cooldownMs: serverConfig.cooldownMs,
+    logger,
+  });
 
   return {
     store,
@@ -88,7 +93,7 @@ export async function createAutopilot(options: {
     approvalService,
     scheduler,
     async shutdown() {
-      scheduler?.stop();
+      scheduler.stop();
       approvalService.stop();
       await store.close();
     },
