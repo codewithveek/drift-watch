@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/table';
 import { Card } from '@/components/ui/card';
 import { EmptyState, SeverityBadge, StatusDot, STATUS_LABEL, timeAgo } from '@/components/domain';
+import { RegisterAgentDialog } from '@/components/register-agent-dialog';
 import type { FleetSummary } from '@/lib/fleet';
 
 export function FleetPage() {
@@ -18,20 +19,23 @@ export function FleetPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold text-ink">Fleet</h1>
-        <p className="text-sm text-ink-3">
-          {fleet.agents.length} {fleet.agents.length === 1 ? 'agent' : 'agents'} registered
-          {fleet.pendingCount > 0 && ` · ${fleet.pendingCount} awaiting a decision`}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-ink">Fleet</h1>
+          <p className="text-sm text-ink-3">
+            {fleet.agents.length} {fleet.agents.length === 1 ? 'agent' : 'agents'} registered
+            {fleet.pendingCount > 0 && ` · ${fleet.pendingCount} awaiting a decision`}
+          </p>
+        </div>
+        <RegisterAgentDialog />
       </div>
 
       <Card className="overflow-hidden py-0">
         {fleet.agents.length === 0 ? (
           <EmptyState icon={<ServerCog className="size-6" />} title="No agents registered yet">
-            An agent registers itself on first run, or you can add one with{' '}
-            <code className="font-mono text-2xs">POST /agents</code>. Once registered it appears
-            here with its live status, drift verdict, and anything waiting on you.
+            A deployment registers its own agent on first run — or use “Register agent” above to
+            add one now. Each appears here with its live status, latest drift verdict, and
+            anything waiting on your decision.
           </EmptyState>
         ) : (
           <div className="overflow-x-auto">
