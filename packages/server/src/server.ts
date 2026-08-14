@@ -14,6 +14,8 @@ import { registerApiKeyRoutes } from './routes/api-keys.js';
 import { registerIntegrationRoutes } from './routes/integrations.js';
 import { registerConsoleStatic } from './routes/static-console.js';
 import { createAuthGate } from './routes/auth.js';
+import { registerAuthRoutes } from './routes/auth-routes.js';
+import { setupAuth } from './auth/index.js';
 import { createAuditRecorder } from './routes/audit.js';
 import { loadServerConfigFromEnv } from './config/server-config.js';
 import { modelClient, modelRegistry } from './config/model-client.js';
@@ -45,9 +47,27 @@ const autopilot = await createAutopilot({
   logger: fastifyServer.log,
 });
 
+// --- built-in auth ---------------------------------------------------------
+// Undefined when the deployment has no database: better-auth stores users and
+// sessions as rows, so a memory/Redis deployment keeps the AUTH_TOKEN path
+// instead of getting a login screen whose sessions vanish on restart.
+const auth = await setupAuth({
+  serverConfig,
+  ...(autopilot.db ? { db: autopilot.db } : {}),
+  logger: {
+    info: (message) => fastifyServer.log.info(message),
+    warn: (message) => fastifyServer.log.warn(message),
+  },
+});
+if (auth) await registerAuthRoutes(fastifyServer, { auth });
+
 // One gate and one audit recorder shared by every route module, so scope
 // enforcement and attribution can't diverge between them.
-const authorize = createAuthGate({ store: autopilot.store, authToken: serverConfig.authToken });
+const authorize = createAuthGate({
+  store: autopilot.store,
+  authToken: serverConfig.authToken,
+  ...(auth ? { auth } : {}),
+});
 const recordAudit = createAuditRecorder(autopilot.store);
 
 await registerRoutes(fastifyServer, {

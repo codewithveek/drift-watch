@@ -96,8 +96,20 @@ export class MemoryStateStore implements StateStore {
     return source.slice(0, limit).map((event) => ({ ...event }));
   }
 
+  /**
+   * `createdAt` is preserved from the existing record rather than taken from
+   * the incoming one. An SDK client re-registers on every deploy with a fresh
+   * `Date.now()`, and letting that through would reset "first seen" each time,
+   * making the fleet list's age column meaningless. Every other field is
+   * replaced wholesale so a definition that stops declaring `toolPolicies`
+   * actually clears them.
+   */
   async upsertAgent(definition: AgentDefinition): Promise<void> {
-    this.agents.set(definition.id, { ...definition });
+    const existing = this.agents.get(definition.id);
+    this.agents.set(definition.id, {
+      ...definition,
+      ...(existing ? { createdAt: existing.createdAt } : {}),
+    });
   }
 
   async getAgentDefinition(agentId: string): Promise<AgentDefinition | undefined> {

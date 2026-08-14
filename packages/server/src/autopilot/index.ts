@@ -18,6 +18,7 @@ import type { ServerConfig } from '../config/server-config.js';
 import { loadPolicyConfig } from '../config/policy-loader.js';
 import { createMetricsQuerySourceFor } from '../config/metrics-source.js';
 import { createStateStore } from '../state/index.js';
+import type { Database } from '../db/client.js';
 import { createNotifiers, type NotifierRegistry } from '../notify/index.js';
 
 export interface Autopilot {
@@ -34,6 +35,13 @@ export interface Autopilot {
    * reports what it WOULD do without doing it.
    */
   scheduler: AutopilotScheduler;
+  /**
+   * The Postgres handle, when that backend was selected. Passed on to
+   * better-auth so human login shares this pool rather than opening a second
+   * one; its absence means the deployment has no database and therefore no
+   * console login (see auth/index.ts).
+   */
+  db?: Database;
   /** Ordered teardown: stop timers, then close the store. */
   shutdown(): Promise<void>;
 }
@@ -46,7 +54,18 @@ export async function createAutopilot(options: {
 }): Promise<Autopilot> {
   const { serverConfig, driftWatchConfig, modelClient, logger } = options;
 
-  const store = createStateStore(serverConfig.redisUrl);
+  // Awaited: the Postgres backend migrates and seeds here, before anything can
+  // read or write. Boot fails loudly on a bad schema rather than serving
+  // traffic against one the code does not match.
+  const { store, kind: storeKind, db } = await createStateStore({
+    databaseUrl: serverConfig.databaseUrl,
+    redisUrl: serverConfig.redisUrl,
+    logger: {
+      info: (message) => logger.info?.(message),
+      error: (message, error) => logger.error?.(`${message}: ${String(error)}`),
+    },
+  });
+  logger.info?.(`state store: ${storeKind}`);
 
   // Backward-compat auto-registration: if no agents are registered yet,
   // register one derived from this server's own config, so existing
@@ -92,6 +111,7 @@ export async function createAutopilot(options: {
     notifiers,
     approvalService,
     scheduler,
+    ...(db ? { db } : {}),
     async shutdown() {
       scheduler.stop();
       approvalService.stop();

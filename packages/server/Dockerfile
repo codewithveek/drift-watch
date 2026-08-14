@@ -38,6 +38,11 @@ ENV NODE_ENV=production
 WORKDIR /app/packages/server
 COPY --from=build /deploy/server ./
 COPY --from=build /workspace/packages/console/dist /app/packages/console/dist
+# Migration SQL, applied by the server itself at boot (src/db/migrate.ts).
+# Listed in the package's `files` too, but copied explicitly because a missing
+# migrations folder fails at STARTUP against a real database rather than at
+# build time — a slow, confusing way to find out it wasn't packaged.
+COPY --from=build /workspace/packages/server/drizzle ./drizzle
 RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app
 USER app
 EXPOSE 3000

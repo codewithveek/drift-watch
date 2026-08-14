@@ -1,6 +1,22 @@
-# Standalone deployment — DriftWatch + Redis, no external services required.
-# This is the file platforms that auto-deploy a repo's docker-compose.yml
-# (Coolify, Railway, plain `docker compose up -d`, ...) will pick up.
+# Standalone deployment — DriftWatch + Postgres. Two containers, nothing else
+# required. This is the file platforms that auto-deploy a repo's
+# docker-compose.yml (Coolify, Railway, plain `docker compose up -d`, ...) pick
+# up.
+#
+# Postgres is the durable state store: agents, API keys, the audit log, drift
+# history, approvals AND the users/sessions behind the console login all live
+# there, and it implements every StateStore method including the leader lock —
+# so Redis is no longer part of the required stack. The server migrates its own
+# schema at boot; there is no separate migration step to run.
+#
+# FIRST RUN: set DW_USER and DW_PASSWORD. They create the admin account the
+# very first time the database is empty, and are ignored afterwards — changing
+# the password in the console is permanent, and these variables can be removed
+# from the environment once you have logged in. Public sign-up is disabled, so
+# without them there is no way into the console.
+#
+# DW_AUTH_SECRET signs session cookies and MUST be stable: change it and every
+# session is invalidated. Generate one with `openssl rand -base64 32`.
 #
 # OpenTelemetry export is optional. Point OTEL_EXPORTER_OTLP_ENDPOINT and
 # PROMETHEUS_URL at a collector/Prometheus you already run elsewhere; left at
@@ -9,11 +25,22 @@
 # alongside a full OTel Collector + Prometheus stack instead, see
 # docker-compose.observability.yml.
 services:
-  redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--save", "60", "1", "--maxmemory-policy", "noeviction"]
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-driftwatch}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-driftwatch}
+      POSTGRES_DB: ${POSTGRES_DB:-driftwatch}
     volumes:
-      - driftwatch-redis:/data
+      - driftwatch-postgres:/var/lib/postgresql/data
+    healthcheck:
+      # The server fails fast if it cannot migrate, so waiting for a genuinely
+      # ready database (not just a started container) avoids a restart loop on
+      # a cold `compose up`.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-driftwatch}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped
 
   driftwatch:
@@ -34,9 +61,25 @@ services:
       QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
       QWEN_API_KEY: ${QWEN_API_KEY:-}
       MODEL: ${MODEL:-qwen3.6-plus}
+      # --- built-in auth (console login) ------------------------------------
+      # Creates the admin account on the FIRST boot against an empty database,
+      # then ignored. Public sign-up is disabled, so without these there is no
+      # way into the console.
+      DW_USER: ${DW_USER:-}
+      DW_PASSWORD: ${DW_PASSWORD:-}
+      # Signs session cookies. Must be stable across restarts and replicas.
+      DW_AUTH_SECRET: ${DW_AUTH_SECRET:-}
+      # The origin users actually reach this at. Must match the browser's
+      # address bar, not the container's internal address, or the session
+      # cookie is scoped to the wrong host and login silently fails.
+      DW_BASE_URL: ${DW_BASE_URL:-http://localhost:3000}
+      # Deprecated break-glass credential; leave unset once an admin exists.
       AUTH_TOKEN: ${AUTH_TOKEN:-}
-      # --- shared state (multi-process): point autopilot at the Redis above ---
-      REDIS_URL: redis://redis:6379
+      # --- durable state ------------------------------------------------------
+      DATABASE_URL: postgres://${POSTGRES_USER:-driftwatch}:${POSTGRES_PASSWORD:-driftwatch}@postgres:5432/${POSTGRES_DB:-driftwatch}
+      # Optional, and ignored when DATABASE_URL is set — Postgres implements
+      # every StateStore method, including the leader lock Redis used to own.
+      REDIS_URL: ${REDIS_URL:-}
       # --- autopilot (drift-triggered remediation loop) ---
       AUTOPILOT_ENABLED: ${AUTOPILOT_ENABLED:-0}
       AUTOPILOT_MODE: ${AUTOPILOT_MODE:-shadow}
@@ -54,8 +97,9 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - redis
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
-  driftwatch-redis:
+  driftwatch-postgres:

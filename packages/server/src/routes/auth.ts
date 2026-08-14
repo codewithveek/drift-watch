@@ -1,28 +1,39 @@
 /**
  * Request authorization for the whole control plane.
  *
- * There are three kinds of principal, resolved in this order:
+ * There are four kinds of principal, resolved in this order:
  *
- *   1. `root`  — the flat AUTH_TOKEN. Holds every scope over every agent, and
- *      is the bootstrap path: it is how the first API key gets minted, and how
- *      you recover when the key store is empty (a real possibility with
- *      MemoryStateStore, which loses keys on restart).
+ *   1. `user` — a logged-in human, identified by a better-auth session cookie.
+ *      This is how the console authenticates. Scopes come from the user's role
+ *      (see auth/roles.ts), which is a named bundle of the SAME `ApiKeyScope`
+ *      values a machine key carries, so every route below is written once and
+ *      applies to both.
  *   2. `api-key` — a minted, hashed, scoped key (see @driftwatch/sdk's
- *      api-keys.ts). Works whether or not AUTH_TOKEN is configured.
- *   3. `local` — the pre-existing dev affordance: with no AUTH_TOKEN set and
- *      no credential presented, RFC1918 clients are trusted. Unchanged.
+ *      api-keys.ts). This is how the SDK and CI authenticate.
+ *   3. `root` — the flat AUTH_TOKEN. DEPRECATED: it exists only as a
+ *      break-glass path for a deployment that has not created its admin user
+ *      yet, and for recovery when the key store is empty (a real possibility
+ *      with MemoryStateStore, which loses keys on restart). It is unset by
+ *      default and a deployment with a seeded admin should leave it that way.
+ *   4. `local` — the dev affordance: with no AUTH_TOKEN set and no credential
+ *      presented, RFC1918 clients are trusted.
  *
- * Deliberate behaviour change from the old flat gate: presenting a bearer that
- * matches nothing is now a 401 even from the local network. Silently
- * downgrading a bad credential to local trust would mean a stale token in a
- * browser's localStorage looked like it was working while actually being
- * ignored.
+ * Cookie before bearer is deliberate. A browser sends its session cookie on
+ * every request automatically, so checking the bearer first would mean an
+ * operator who once pasted a stale token into a fetch call would be
+ * authenticated as that token rather than as themselves, and the audit log
+ * would name the wrong actor.
+ *
+ * Presenting a bearer that matches nothing is a 401 even from the local
+ * network: silently downgrading a bad credential to local trust would make a
+ * stale token look like it was working while actually being ignored.
  *
  * The integration webhooks (Slack/Telegram) do NOT use any of this — they
  * carry their own signature auth.
  */
 import { timingSafeEqual } from 'node:crypto';
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import { fromNodeHeaders } from 'better-auth/node';
 import type { ApiKeyRecord, ApiKeyScope, StateStore } from '@driftwatch/sdk';
 import {
   API_KEY_SCOPES,
@@ -30,17 +41,21 @@ import {
   hashApiKeyToken,
   isApiKeyFleetWide,
 } from '@driftwatch/sdk';
+import type { Auth } from '../auth/auth.js';
+import { scopesForRole } from '../auth/roles.js';
 
 /** Who is making this request, once authenticated. */
 export interface Principal {
-  kind: 'root' | 'api-key' | 'local';
-  /** Stable id for the audit log: 'root', 'local', or the API key's id. */
+  kind: 'user' | 'root' | 'api-key' | 'local';
+  /** Stable id for the audit log: a user id, 'root', 'local', or the API key's id. */
   id: string;
-  /** Human label for the audit log: 'AUTH_TOKEN', 'local-network', or the key's name. */
+  /** Human label for the audit log: an email, 'AUTH_TOKEN', 'local-network', or the key's name. */
   label: string;
   scopes: readonly ApiKeyScope[];
   /** Agents this principal may touch. Undefined = fleet-wide. */
   agentIds?: string[];
+  /** Set for `user` principals: forces the console to a password-change screen. */
+  mustChangePassword?: boolean;
 }
 
 const ROOT_PRINCIPAL: Principal = {
@@ -81,6 +96,12 @@ export interface AuthRequirement {
 export interface AuthGateOptions {
   store: StateStore;
   authToken: string;
+  /**
+   * Omitted when the deployment has no database — better-auth requires one, so
+   * a memory-store deployment has no human login and falls back to the
+   * AUTH_TOKEN/local paths.
+   */
+  auth?: Auth;
 }
 
 /**
@@ -96,10 +117,10 @@ export type AuthorizeFn = (
 ) => Promise<Principal | undefined>;
 
 export function createAuthGate(options: AuthGateOptions): AuthorizeFn {
-  const { store, authToken } = options;
+  const { store, authToken, auth } = options;
 
   return async function authorize(request, reply, requirement) {
-    const outcome = await resolvePrincipal(request, store, authToken);
+    const outcome = await resolvePrincipal(request, store, authToken, auth);
     if (!outcome.principal) {
       reply.code(401).send({ error: outcome.error });
       return undefined;
@@ -123,15 +144,35 @@ async function resolvePrincipal(
   request: FastifyRequest,
   store: StateStore,
   authToken: string,
+  auth?: Auth,
 ): Promise<PrincipalOutcome> {
+  // Session cookie first — see this module's docblock on why a browser's own
+  // identity must win over any bearer that happens to also be present.
+  const sessionPrincipal = await resolveSessionPrincipal(request, auth);
+  if (sessionPrincipal) return { principal: sessionPrincipal, error: '' };
+
   const bearerToken = readBearerToken(request);
 
   if (bearerToken === undefined) {
-    // No credential at all. Only the dev local-network path can rescue this,
-    // and only when the deployment has no AUTH_TOKEN configured.
-    if (!authToken && isRequestFromLocalNetwork(request)) {
+    /*
+     * No credential at all. The local-network path is the only thing that can
+     * rescue this, and it is available ONLY when the deployment has no other
+     * way to authenticate anyone — no AUTH_TOKEN and no login.
+     *
+     * The `!auth` term is load-bearing and was added with the built-in login.
+     * Without it, a deployment that has a database, a seeded admin and a login
+     * screen would still hand FULL fleet-wide admin scopes to any
+     * uncredentialed request arriving from a private IP. That is not a
+     * theoretical range: every container on the same Docker network has one,
+     * and so does every request forwarded by a reverse proxy that does not set
+     * X-Forwarded-For (or when TRUST_PROXY is off, which is the default). The
+     * dev affordance is acceptable when the alternative is no auth at all; it
+     * is a silent, total bypass once real auth exists.
+     */
+    if (!authToken && !auth && isRequestFromLocalNetwork(request)) {
       return { principal: LOCAL_PRINCIPAL, error: '' };
     }
+    if (auth) return { error: 'not authenticated: sign in to continue' };
     if (authToken) return { error: 'unauthorized' };
     return {
       error:
@@ -154,6 +195,54 @@ async function resolvePrincipal(
 
   await touchApiKeyIfStale(store, record, request);
   return { principal: principalForApiKey(record), error: '' };
+}
+
+/**
+ * Resolves a logged-in human from the session cookie, or undefined when there
+ * is no session (or no database, so no better-auth at all).
+ *
+ * A banned user resolves to undefined rather than throwing: the effect an
+ * operator expects from disabling an account is that it stops working, and
+ * falling through to the 401 path produces exactly that.
+ *
+ * Failure is swallowed to a miss, not surfaced. If the session lookup errors —
+ * a database blip — the request continues to the bearer paths and, failing
+ * those, gets a 401. Turning a transient store error into a 500 on EVERY route
+ * would take the whole console down for a hiccup that a page refresh recovers
+ * from.
+ */
+async function resolveSessionPrincipal(
+  request: FastifyRequest,
+  auth?: Auth,
+): Promise<Principal | undefined> {
+  if (!auth) return undefined;
+  // Cheap pre-check: skip the store round-trip entirely for the SDK and CI,
+  // which never carry cookies.
+  if (!request.headers.cookie) return undefined;
+
+  try {
+    const session = await auth.api.getSession({ headers: fromNodeHeaders(request.headers) });
+    if (!session?.user) return undefined;
+    if (session.user.banned) return undefined;
+
+    const user = session.user as typeof session.user & {
+      role?: string | null;
+      mustChangePassword?: boolean | null;
+    };
+    return {
+      kind: 'user',
+      id: user.id,
+      label: user.email,
+      scopes: scopesForRole(user.role),
+      // Users are never agent-scoped today; the resource axis exists only on
+      // API keys. Leaving `agentIds` undefined means fleet-wide, which is what
+      // a role-based principal should be until per-team scoping exists.
+      mustChangePassword: user.mustChangePassword === true,
+    };
+  } catch (error) {
+    request.log.warn({ error }, 'session lookup failed; falling through to bearer auth');
+    return undefined;
+  }
 }
 
 export function principalForApiKey(record: ApiKeyRecord): Principal {
