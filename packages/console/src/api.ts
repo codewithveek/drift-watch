@@ -117,15 +117,11 @@ export interface CreateApiKeyRequest {
   expiresAt?: number;
 }
 
-const TOKEN_KEY = 'driftwatch.token';
-
-export function getToken(): string {
-  return localStorage.getItem(TOKEN_KEY) ?? '';
-}
-
-export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
-}
+/**
+ * Every DriftWatch resource route. Auth lives at /api/auth (better-auth's own
+ * base path, deliberately unversioned) and is called from lib/auth.ts.
+ */
+const API_BASE = '/api/v1';
 
 /** Thrown for any non-2xx response, carrying the status so callers can branch on 401/404. */
 export class ApiError extends Error {
@@ -138,13 +134,28 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Authentication is a session cookie, not a bearer token.
+ *
+ * The console used to keep an operator-pasted `AUTH_TOKEN` in localStorage and
+ * attach it here. That credential was the deployment's most privileged secret,
+ * never expired, was readable by any XSS, and made every action in the audit log
+ * read as `root` rather than as a person. It is gone: the cookie is httpOnly, so
+ * this module cannot read it and neither can injected script.
+ *
+ * `credentials: 'same-origin'` is the default for same-origin requests and is
+ * stated explicitly because the whole client depends on it.
+ */
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getToken();
-  const response = await fetch(path, {
+  const response = await fetch(`${API_BASE}${path}`, {
     ...init,
+    credentials: 'same-origin',
     headers: {
       ...(init?.body ? { 'content-type': 'application/json' } : {}),
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      // Marks this as a programmatic request. A cross-site form POST cannot set
+      // a custom header without a CORS preflight the server never grants, so
+      // requiring it is a cheap second line of CSRF defence behind SameSite=Lax.
+      'x-requested-with': 'driftwatch-console',
       ...(init?.headers ?? {}),
     },
   });

@@ -1,19 +1,10 @@
 import { NavLink, useLocation, useRouteLoaderData } from 'react-router';
-import {
-  Activity,
-  Fingerprint,
-  KeyRound,
-  LayoutGrid,
-  Plus,
-  ScrollText,
-  ShieldCheck,
-} from 'lucide-react';
+import { Activity, Bot, KeyRound, LayoutGrid, ScrollText, ShieldCheck } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
-  SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
@@ -23,26 +14,23 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from '@/components/ui/sidebar';
-import { RegisterAgentDialog } from '@/components/register-agent-dialog';
-import { TokenDialog } from '@/components/token-dialog';
-import { StatusDot } from '@/components/domain';
-import { getToken } from '@/api';
-import { cn } from '@/lib/utils';
-import type { FleetSummary } from '@/lib/fleet';
+import { UserMenu } from '@/components/user-menu';
+import type { RootData } from '@/routes/root';
 
 /**
  * The permanent left rail.
  *
- * Two groups, because the fleet has two kinds of destination: the control
- * centre (things you DO — triage, review, audit) and the agents themselves
- * (things you INSPECT). Listing every agent in the rail rather than hiding
- * them behind an "Agents" link is the point of a fleet console: an operator
- * watching four agents should never have to navigate to find out which one is
- * paused, or which one is holding a request open.
+ * One flat group of destinations. This previously enumerated every registered
+ * agent in the rail, on the reasoning that a fleet operator should see at a
+ * glance which agent is paused or holding a request open. That reasoning does
+ * not survive scale — a rail is fine at four agents and unusable at fifty — and
+ * the information it carried is better served by the dashboard's status roll-up
+ * and the /agents inventory, which can sort, filter and search.
  */
 
-const CONTROL_CENTER = [
-  { to: '/', label: 'Overview', icon: LayoutGrid, exact: true },
+const NAV_ITEMS = [
+  { to: '/', label: 'Dashboard', icon: LayoutGrid, exact: true },
+  { to: '/agents', label: 'Agents', icon: Bot, exact: false },
   { to: '/approvals', label: 'Approvals', icon: ShieldCheck, exact: false },
   { to: '/activity', label: 'Activity', icon: ScrollText, exact: false },
   { to: '/settings/api-keys', label: 'API keys', icon: KeyRound, exact: false },
@@ -59,10 +47,9 @@ const ACTIVE_ITEM =
 export function AppSidebar() {
   // Undefined inside the root error boundary, which renders the same shell so a
   // failed load still has navigation instead of a bare error page.
-  const fleet = useRouteLoaderData('root') as FleetSummary | undefined;
-  const agents = fleet?.agents ?? [];
-  const pendingCount = fleet?.pendingCount ?? 0;
-  const tokenConfigured = getToken().length > 0;
+  const data = useRouteLoaderData('root') as RootData | undefined;
+  const agentCount = data?.agents.length ?? 0;
+  const pendingCount = data?.pendingCount ?? 0;
 
   /*
    * Active state is derived here rather than from NavLink's render prop:
@@ -91,94 +78,43 @@ export function AppSidebar() {
           <SidebarGroupLabel>Control center</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {CONTROL_CENTER.map(({ to, label, icon: Icon, exact }) => (
-                <SidebarMenuItem key={to}>
-                  <SidebarMenuButton asChild isActive={isActive(to, exact)} className={ACTIVE_ITEM}>
-                    <NavLink to={to} end={exact}>
-                      <Icon />
-                      <span>{label}</span>
-                    </NavLink>
-                  </SidebarMenuButton>
-                  {to === '/approvals' && pendingCount > 0 && (
-                    <SidebarMenuBadge className="text-warn-text">{pendingCount}</SidebarMenuBadge>
-                  )}
-                </SidebarMenuItem>
-              ))}
+              {NAV_ITEMS.map(({ to, label, icon: Icon, exact }) => {
+                // Two different counts, on two different items: how many agents
+                // exist (informational) and how many things are waiting on a
+                // human (actionable). Only the second is tinted.
+                const badge =
+                  to === '/approvals' && pendingCount > 0
+                    ? { value: pendingCount, urgent: true }
+                    : to === '/agents' && agentCount > 0
+                      ? { value: agentCount, urgent: false }
+                      : undefined;
+                return (
+                  <SidebarMenuItem key={to}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={isActive(to, exact)}
+                      className={ACTIVE_ITEM}
+                    >
+                      <NavLink to={to} end={exact}>
+                        <Icon />
+                        <span>{label}</span>
+                      </NavLink>
+                    </SidebarMenuButton>
+                    {badge && (
+                      <SidebarMenuBadge className={badge.urgent ? 'text-warn-text' : 'text-ink-3'}>
+                        {badge.value}
+                      </SidebarMenuBadge>
+                    )}
+                  </SidebarMenuItem>
+                );
+              })}
             </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel>
-            Agents
-            {agents.length > 0 && (
-              <span className="ml-1.5 tabular-nums text-ink-3">{agents.length}</span>
-            )}
-          </SidebarGroupLabel>
-          <RegisterAgentDialog
-            trigger={
-              <SidebarGroupAction title="Register agent">
-                <Plus />
-                <span className="sr-only">Register agent</span>
-              </SidebarGroupAction>
-            }
-          />
-          <SidebarGroupContent>
-            {agents.length === 0 ? (
-              <p className="px-2 py-1.5 text-xs text-ink-3">
-                None registered yet. A deployment registers its own on first run.
-              </p>
-            ) : (
-              <SidebarMenu>
-                {agents.map(({ definition, state, pendingApprovals, pendingToolCalls }) => {
-                  const awaiting = pendingApprovals + pendingToolCalls;
-                  const to = `/agents/${definition.id}`;
-                  return (
-                    <SidebarMenuItem key={definition.id}>
-                      <SidebarMenuButton
-                        asChild
-                        isActive={isActive(to, false)}
-                        className={ACTIVE_ITEM}
-                      >
-                        <NavLink to={to}>
-                          <StatusDot status={state.status} />
-                          <span className="truncate">{definition.name}</span>
-                        </NavLink>
-                      </SidebarMenuButton>
-                      {awaiting > 0 && (
-                        <SidebarMenuBadge className="text-warn-text">{awaiting}</SidebarMenuBadge>
-                      )}
-                    </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
-            )}
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <TokenDialog
-              trigger={
-                <SidebarMenuButton className="text-ink-3">
-                  {/* Fingerprint, not KeyRound: this is "how THIS browser
-                      authenticates", distinct from the API keys page above. */}
-                  <Fingerprint />
-                  <span>{tokenConfigured ? 'Token set' : 'No token set'}</span>
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      'ml-auto size-1.5 shrink-0 rounded-full',
-                      tokenConfigured ? 'bg-ok' : 'bg-line-2',
-                    )}
-                  />
-                </SidebarMenuButton>
-              }
-            />
-          </SidebarMenuItem>
-        </SidebarMenu>
+        <UserMenu user={data?.user} />
       </SidebarFooter>
 
       <SidebarRail />

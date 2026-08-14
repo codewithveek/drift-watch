@@ -3,10 +3,11 @@ import { createRoot } from 'react-dom/client';
 import { createBrowserRouter, RouterProvider } from 'react-router';
 import '@fontsource-variable/inter';
 import { ApiError } from './api.ts';
-import { loadFleetSummary } from './lib/fleet.ts';
 import type { RouteHandle } from './components/app-header.tsx';
-import { RootErrorBoundary, RootLayout } from './routes/root.tsx';
+import { RootErrorBoundary, RootLayout, rootLoader } from './routes/root.tsx';
+import { LoginPage } from './routes/login.tsx';
 import { FleetPage } from './routes/fleet.tsx';
+import { AgentsPage } from './routes/agents.tsx';
 import { ApprovalsPage } from './routes/approvals.tsx';
 import { ActivityPage, activityLoader } from './routes/activity.tsx';
 import { AgentLayout, agentLoader, type AgentLoaderData } from './routes/agent.tsx';
@@ -43,17 +44,23 @@ const staticCrumb = (label: string): RouteHandle => ({ crumb: () => ({ label }) 
 
 const router = createBrowserRouter(
   [
+    // Outside the root layout on purpose: the shell's sidebar and header are
+    // meaningless before sign-in, and nesting this under a route whose loader
+    // redirects unauthenticated visitors to /login would be a redirect loop.
+    { path: '/login', element: <LoginPage /> },
     {
       id: 'root',
       path: '/',
       element: <RootLayout />,
       errorElement: <RootErrorBoundary />,
-      // The fleet summary powers the overview, the fleet-wide approvals queue
-      // and the sidebar's pending badge, so it is loaded once here rather than
-      // three times.
-      loader: withErrorResponses(loadFleetSummary),
+      // Resolves the session (redirecting to /login when there isn't one) and
+      // loads the fleet summary. One loader because the summary powers the
+      // dashboard, the inventory, the fleet-wide approvals queue and the
+      // sidebar's badges — four consumers, one fetch.
+      loader: withErrorResponses(rootLoader),
       children: [
-        { index: true, element: <FleetPage />, handle: staticCrumb('Overview') },
+        { index: true, element: <FleetPage />, handle: staticCrumb('Dashboard') },
+        { path: 'agents', element: <AgentsPage />, handle: staticCrumb('Agents') },
         { path: 'approvals', element: <ApprovalsPage />, handle: staticCrumb('Approvals') },
         {
           id: 'activity',

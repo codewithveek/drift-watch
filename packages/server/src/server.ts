@@ -70,38 +70,76 @@ const authorize = createAuthGate({
 });
 const recordAudit = createAuditRecorder(autopilot.store);
 
-await registerRoutes(fastifyServer, {
-  modelClient,
-  modelRegistry,
-  store: autopilot.store,
-  serverConfig,
-  driftWatchConfig,
-  notifiers: autopilot.notifiers,
-  toolCallApprovalTimeoutMs: serverConfig.toolCallApprovalTimeoutMs,
-  toolCallApprovalTimeoutDecision: serverConfig.toolCallApprovalTimeoutDecision,
-  authorize,
-});
-await registerConsoleRoutes(fastifyServer, {
-  store: autopilot.store,
-  serverConfig,
-  driftWatchConfig,
-  approvalService: autopilot.approvalService,
-  scheduler: autopilot.scheduler,
-  authorize,
-  recordAudit,
-});
-await registerApiKeyRoutes(fastifyServer, {
-  store: autopilot.store,
-  authorize,
-  recordAudit,
-});
+/*
+ * Liveness probe, pinned at the ROOT and outside the versioned API.
+ *
+ * Orchestrators (the Dockerfile's HEALTHCHECK, k8s probes, load balancers) are
+ * configured with a URL that must not move when the API version does — a
+ * versioned health endpoint means a v2 rollout silently fails every probe. The
+ * same handler is also reachable at /api/v1/health, since registerRoutes
+ * defines it too and gets mounted under the prefix below.
+ */
+fastifyServer.get('/health', async () => ({ ok: true }));
+
+/*
+ * Every DriftWatch API route lives under /api/v1.
+ *
+ * This became necessary the moment the console moved from /console to the root:
+ * the console has PAGE routes at /agents and /audit, and the API has RESOURCE
+ * routes at the same paths. Previously the /console prefix disambiguated them.
+ * Serving the SPA at / makes `GET /agents` ambiguous — a browser navigation
+ * wants HTML, the SDK wants JSON — and content negotiation cannot resolve it
+ * because both send `Accept: *​/*`.
+ *
+ * Versioning is worth having independently: the SDK is published separately and
+ * now consumes this surface as a public contract, so it needs a way to pin.
+ *
+ * Registered as an encapsulated plugin so the prefix is declared once rather
+ * than threaded through every route module.
+ */
+const API_PREFIX = '/api/v1';
+await fastifyServer.register(
+  async (api) => {
+    await registerRoutes(api, {
+      modelClient,
+      modelRegistry,
+      store: autopilot.store,
+      serverConfig,
+      driftWatchConfig,
+      notifiers: autopilot.notifiers,
+      toolCallApprovalTimeoutMs: serverConfig.toolCallApprovalTimeoutMs,
+      toolCallApprovalTimeoutDecision: serverConfig.toolCallApprovalTimeoutDecision,
+      authorize,
+    });
+    await registerConsoleRoutes(api, {
+      store: autopilot.store,
+      serverConfig,
+      driftWatchConfig,
+      approvalService: autopilot.approvalService,
+      scheduler: autopilot.scheduler,
+      authorize,
+      recordAudit,
+    });
+    await registerApiKeyRoutes(api, { store: autopilot.store, authorize, recordAudit });
+  },
+  { prefix: API_PREFIX },
+);
+
+/*
+ * Inbound webhooks stay UNVERSIONED at /integrations.
+ *
+ * These URLs are configured inside Slack and Telegram by whoever set the
+ * integration up. Moving them under a versioned prefix would silently break
+ * every existing installation's approve/reject buttons, and they are third-party
+ * callback endpoints rather than part of DriftWatch's own API contract.
+ */
 await registerIntegrationRoutes(fastifyServer, {
   approvalService: autopilot.approvalService,
   store: autopilot.store,
   serverConfig,
 });
 
-// Serve the built React console (packages/console/dist) at /console, if present.
+// Serve the built React console (packages/console/dist) at the ROOT, if present.
 const consoleDistDir = join(
   dirname(fileURLToPath(import.meta.url)),
   '../../console/dist',

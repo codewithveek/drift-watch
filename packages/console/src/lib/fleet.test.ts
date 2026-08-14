@@ -20,11 +20,22 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
-/** Routes a request to a canned body based on its path. */
+/** Every resource call must go through the versioned API prefix. */
+const API_BASE = '/api/v1';
+
+/**
+ * Routes a request to a canned body based on its path.
+ *
+ * The prefix is asserted rather than pattern-matched away: a client that
+ * silently dropped it would hit the console's own SPA routes, get index.html
+ * back with a 200, and fail on `JSON.parse('<')` — a confusing failure that this
+ * turns into an obvious one.
+ */
 function mockFetch(handler: (path: string) => unknown | Promise<unknown>) {
   return vi.fn(async (input: RequestInfo | URL) => {
-    const path = typeof input === 'string' ? input : input.toString();
-    const body = await handler(path);
+    const url = typeof input === 'string' ? input : input.toString();
+    expect(url.startsWith(API_BASE)).toBe(true);
+    const body = await handler(url.slice(API_BASE.length));
     if (body instanceof Response) return body;
     return jsonResponse(body);
   });

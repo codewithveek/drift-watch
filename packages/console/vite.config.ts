@@ -3,28 +3,26 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
-// Served in production from the server at /console/ (see server.ts @fastify/static).
-// In dev, the API paths are proxied to the Fastify server on :3000 so the
-// console can run on :5173 with the same fetch('/agents/...') calls as in
-// prod. Every console-facing route is now nested under /agents/:agentId/...
-// (or /agents itself for list/register) except the fleet-wide /drift/scan
-// and bare /drift alias (both under /drift) and /health.
-// `/tools` belongs here for the same reason as the rest: the console's tool
-// registry lookups (Config's tool list, Overview's tool-access card) are
-// same-origin fetches in production. Without the proxy entry they resolve
-// against Vite in dev, which answers every unknown path with the SPA's
-// index.html — so the fetch succeeds and JSON.parse fails on '<'.
-const API_PATHS = [
-  '/agents',
-  '/api-keys',
-  '/audit',
-  '/drift',
-  '/health',
-  '/tools',
-];
+// Served in production from the server at the ROOT (see server.ts
+// @fastify/static). In dev, server paths are proxied to Fastify on :3000 so the
+// console runs on :5173 making the same same-origin fetches as in production.
+//
+// This list used to enumerate every resource (/agents, /audit, /tools, ...)
+// because the API sat at the root alongside the console's own page routes. Now
+// that the API is namespaced under /api, two prefixes cover everything:
+//
+//   /api  — both /api/v1 (DriftWatch) and /api/auth (better-auth). The auth
+//           entry is not optional: login POSTs from :5173 must reach Fastify, or
+//           they resolve against Vite, which answers unknown paths with the SPA
+//           shell — so the fetch "succeeds" and JSON.parse fails on '<'.
+//   /health
+//
+// Everything else falls through to Vite's SPA handling, which is what makes
+// console deep links work in dev.
+const SERVER_PATHS = ['/api', '/health'];
 
 export default defineConfig({
-  base: '/console/',
+  base: '/',
   plugins: [react(), tailwindcss()],
   build: {
     rollupOptions: {
@@ -54,7 +52,18 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: Object.fromEntries(
-      API_PATHS.map((path) => [path, { target: 'http://localhost:3000', changeOrigin: true }]),
+      SERVER_PATHS.map((path) => [
+        path,
+        {
+          target: 'http://localhost:3000',
+          // `changeOrigin: false` is required now that auth uses cookies.
+          // Rewriting the Host header to localhost:3000 makes better-auth set
+          // the session cookie for that host, which the browser then refuses to
+          // store against the :5173 origin — login appears to succeed and never
+          // sticks. Keeping the original Host means the cookie matches.
+          changeOrigin: false,
+        },
+      ]),
     ),
   },
 });
