@@ -22,8 +22,10 @@ const VALID_VERDICT_JSON = JSON.stringify({
 
 function mockReply(text: string) {
   return {
-    content: [{ type: 'text', text }],
-    finishReason: { unified: 'stop', raw: 'stop' },
+    // `as const` so `type` stays the literal 'text' rather than widening to
+    // string, which is what LanguageModelV4Content's discriminated union needs.
+    content: [{ type: 'text' as const, text }],
+    finishReason: { unified: 'stop' as const, raw: 'stop' },
     usage: {
       inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
       outputTokens: { total: 5, text: 5, reasoning: 0 },

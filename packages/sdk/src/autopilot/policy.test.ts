@@ -34,8 +34,12 @@ function driftReport(overrides: {
       recommended_action: 'pause and investigate',
     },
     judgeTokenUsage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+    // How many times the drift judge had to be re-asked before it returned
+    // parseable JSON. Part of DriftReport since the retry work; the fixture
+    // never gained it because test files were not typechecked.
+    judgeAttempts: 1,
     providerName: 'qwen',
-    modelIdentifier: 'glm-5.2',
+    modelIdentifier: 'qwen3.6-plus',
   };
 }
 

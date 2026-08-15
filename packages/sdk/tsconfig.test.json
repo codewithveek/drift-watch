@@ -1,0 +1,20 @@
+/*
+ * Typechecks the test files, which tsconfig.json deliberately excludes from the
+ * build.
+ *
+ * This exists because the policy-authoring types are only meaningful if their
+ * FAILURE cases are verified, and those are written as `@ts-expect-error`. Under
+ * the build config those files are never seen by tsc, so a `@ts-expect-error`
+ * guarding an error that no longer occurs would pass silently — the assertions
+ * would look like coverage while checking nothing at all.
+ */
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src/**/*"],
+  "exclude": ["dist", "node_modules"]
+}

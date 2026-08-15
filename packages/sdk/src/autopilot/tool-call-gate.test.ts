@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { gateToolCall } from './tool-call-gate.js';
-import type { StateStore, ToolCallApproval } from './types.js';
+import type { ApprovalStatus, ToolCallApproval } from './types.js';
+import { MemoryStateStore } from './memory-store.js';
 import type { NotifierRegistry } from './notify-dispatch.js';
 import type { ToolCallPolicyRule } from './tool-call-policy.js';
 
@@ -8,65 +9,41 @@ function rule(overrides: Partial<ToolCallPolicyRule> & Pick<ToolCallPolicyRule, 
   return { condition: {}, severity: 'medium', ...overrides };
 }
 
-/** A minimal in-memory StateStore stand-in — only the methods gateToolCall touches. */
-function fakeStore(): StateStore & { approvals: Map<string, ToolCallApproval> } {
-  const approvals = new Map<string, ToolCallApproval>();
-  return {
-    approvals,
-    async upsertAgent() {},
-    async getAgentDefinition() {
-      return { id: 'agent-1', name: 'Agent One', createdAt: 0 };
-    },
-    async listAgents() {
-      return [];
-    },
-    async getAgentState() {
-      return { status: 'running', activeVersion: 1, updatedAt: 0 };
-    },
-    async setAgentState() {},
-    async createApproval() {},
-    async getApproval() {
-      return undefined;
-    },
-    async listPendingApprovals() {
-      return [];
-    },
-    async resolveApproval() {
-      return undefined;
-    },
-    async createToolCallApproval(approval) {
-      approvals.set(approval.id, { ...approval });
-    },
-    async getToolCallApproval(id) {
-      const found = approvals.get(id);
-      return found ? { ...found } : undefined;
-    },
-    async listPendingToolCallApprovals() {
-      return Array.from(approvals.values()).filter((a) => a.status === 'pending');
-    },
-    async resolveToolCallApproval(id, status, resolvedBy, channel) {
-      const found = approvals.get(id);
-      if (!found || found.status !== 'pending') return undefined;
-      const resolved = { ...found, status, resolvedBy, channel, resolvedAt: Date.now() };
-      approvals.set(id, resolved);
-      return { ...resolved };
-    },
-    async recordDriftVerdict() {},
-    async listDriftHistory() {
-      return [];
-    },
-    async recordAction() {},
-    async listActionLog() {
-      return [];
-    },
-    async checkAndSetCooldown() {
-      return true;
-    },
-    async acquireLeaderLock() {
-      return true;
-    },
-    async close() {},
-  };
+/**
+ * A StateStore for the gate's tests, built ON TOP of MemoryStateStore rather
+ * than hand-rolling every method.
+ *
+ * The previous version implemented the interface by hand and silently fell
+ * behind it: `StateStore` grew eight API-key and audit methods and the mock kept
+ * claiming to be one, which nothing caught because test files were excluded from
+ * typecheck. Subclassing means it can never drift again — new interface methods
+ * are inherited — and the mirror map below exists only so the assertions can
+ * inspect resolved approvals too, which no listing method exposes. It is named
+ * `seenToolCalls` rather than `approvals` because the base class already has a
+ * private field by that name, and shadowing it is a type error.
+ */
+class FakeStore extends MemoryStateStore {
+  readonly seenToolCalls = new Map<string, ToolCallApproval>();
+
+  override async createToolCallApproval(approval: ToolCallApproval): Promise<void> {
+    await super.createToolCallApproval(approval);
+    this.seenToolCalls.set(approval.id, { ...approval });
+  }
+
+  override async resolveToolCallApproval(
+    id: string,
+    status: Exclude<ApprovalStatus, 'pending'>,
+    resolvedBy: string,
+    channel: string,
+  ): Promise<ToolCallApproval | undefined> {
+    const resolved = await super.resolveToolCallApproval(id, status, resolvedBy, channel);
+    if (resolved) this.seenToolCalls.set(id, resolved);
+    return resolved;
+  }
+}
+
+function fakeStore(): FakeStore {
+  return new FakeStore();
 }
 
 function fakeNotifiers(): NotifierRegistry & { sent: unknown[] } {
@@ -99,7 +76,7 @@ describe('gateToolCall', () => {
       timeoutDecision: 'rejected',
     });
     expect(result).toEqual({ allowed: true });
-    expect(store.approvals.size).toBe(0);
+    expect(store.seenToolCalls.size).toBe(0);
     expect(notifiers.sent).toHaveLength(0);
   });
 
@@ -131,7 +108,7 @@ describe('gateToolCall', () => {
       timeoutDecision: 'rejected',
     });
     expect(result).toEqual({ allowed: false, reason: 'never auto-refund' });
-    expect(store.approvals.size).toBe(0);
+    expect(store.seenToolCalls.size).toBe(0);
   });
 
   it('require_approval creates a pending approval and notifies, then allows once approved', async () => {
@@ -150,8 +127,8 @@ describe('gateToolCall', () => {
     });
 
     // Wait for the approval to be created, then resolve it as approved.
-    await vi.waitFor(() => expect(store.approvals.size).toBe(1));
-    const [id] = store.approvals.keys();
+    await vi.waitFor(() => expect(store.seenToolCalls.size).toBe(1));
+    const [id] = store.seenToolCalls.keys();
     await store.resolveToolCallApproval(id, 'approved', 'console-user', 'console');
 
     expect(await gatePromise).toEqual({ allowed: true });
@@ -172,8 +149,8 @@ describe('gateToolCall', () => {
       pollIntervalMs: 10,
     });
 
-    await vi.waitFor(() => expect(store.approvals.size).toBe(1));
-    const [id] = store.approvals.keys();
+    await vi.waitFor(() => expect(store.seenToolCalls.size).toBe(1));
+    const [id] = store.seenToolCalls.keys();
     await store.resolveToolCallApproval(id, 'rejected', 'console-user', 'console');
 
     const result = await gatePromise;
@@ -194,7 +171,7 @@ describe('gateToolCall', () => {
       pollIntervalMs: 10,
     });
     expect(result.allowed).toBe(false);
-    const [approval] = store.approvals.values();
+    const [approval] = store.seenToolCalls.values();
     expect(approval.status).toBe('rejected');
     expect(approval.channel).toBe('timeout');
   });
@@ -259,8 +236,8 @@ describe('gateToolCall', () => {
       pollIntervalMs: 10,
     });
 
-    await vi.waitFor(() => expect(store.approvals.size).toBe(1));
-    const [id] = store.approvals.keys();
+    await vi.waitFor(() => expect(store.seenToolCalls.size).toBe(1));
+    const [id] = store.seenToolCalls.keys();
     await store.resolveToolCallApproval(id, 'approved', 'console', 'console');
     expect(await gatePromise).toEqual({ allowed: true });
   });
