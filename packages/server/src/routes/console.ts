@@ -75,10 +75,30 @@ async function requireAgent(
   return agent;
 }
 
-/** Rejects (and 400s) any toolNames not present in the server's tool registry. */
-function validateToolNames(toolNames: string[] | undefined, reply: FastifyReply): boolean {
+/**
+ * The tool names a given agent may legitimately reference.
+ *
+ * An agent registered through the SDK declares its OWN tools, which this server
+ * has never heard of — its `allToolNames` registry only contains the reference
+ * implementation's in-process demo tools. Validating against that registry
+ * rejected every policy edit for every SDK-registered agent, which made the
+ * console unusable for exactly the agents it exists to govern.
+ *
+ * So: an agent that declared its tools is validated against those; one that did
+ * not is an in-process agent using this server's registry.
+ */
+function knownToolNames(declared: string[] | undefined): string[] {
+  return declared ?? allToolNames;
+}
+
+/** Rejects (and 400s) any toolNames not present in the agent's own tool set. */
+function validateToolNames(
+  toolNames: string[] | undefined,
+  allowed: string[],
+  reply: FastifyReply,
+): boolean {
   if (!toolNames) return true;
-  const unknown = toolNames.filter((name) => !allToolNames.includes(name));
+  const unknown = toolNames.filter((name) => !allowed.includes(name));
   if (unknown.length > 0) {
     reply.code(400).send({ error: `unknown tool names: ${unknown.join(', ')}` });
     return false;
@@ -89,12 +109,13 @@ function validateToolNames(toolNames: string[] | undefined, reply: FastifyReply)
 /** Rejects (and 400s) any toolPolicies rule whose `tool` isn't a registered tool name or '*'. */
 function validateToolPolicies(
   toolPolicies: ToolCallPolicyRule[] | undefined,
+  allowed: string[],
   reply: FastifyReply,
 ): boolean {
   if (!toolPolicies) return true;
   const unknown = toolPolicies
     .map((rule) => rule.tool)
-    .filter((toolName) => toolName !== '*' && !allToolNames.includes(toolName));
+    .filter((toolName) => toolName !== '*' && !allowed.includes(toolName));
   if (unknown.length > 0) {
     reply.code(400).send({ error: `toolPolicies reference unknown tool names: ${unknown.join(', ')}` });
     return false;
@@ -188,8 +209,17 @@ export async function registerConsoleRoutes(
     if (!AGENT_ID_PATTERN.test(id)) {
       return reply.code(400).send({ error: 'id must match ^[a-zA-Z0-9_-]+$' });
     }
-    if (!validateToolNames(toolNames, reply)) return;
-    if (!validateToolPolicies(toolPolicies, reply)) return;
+    /*
+     * Console registration SELECTS from this server's tool registry, so an
+     * unknown name here is a typo and must 400.
+     *
+     * This is deliberately stricter than POST /agents/:id/sync, which is the
+     * SDK's endpoint and where an agent DECLARES tools this server has never
+     * heard of. Same-looking fields, genuinely different acts: one picks from a
+     * known set, the other defines the set.
+     */
+    if (!validateToolNames(toolNames, allToolNames, reply)) return;
+    if (!validateToolPolicies(toolPolicies, allToolNames, reply)) return;
     if (guardrailsSource && !(await validateAgentReference(store, guardrailsSource, id, 'guardrailsSource', reply))) return;
     if (
       toolPoliciesSource &&
@@ -259,8 +289,9 @@ export async function registerConsoleRoutes(
       const agent = await requireAgent(store, request.params.agentId, reply);
       if (!agent) return;
 
-      if (!validateToolNames(body.toolNames, reply)) return;
-      if (!validateToolPolicies(body.toolPolicies, reply)) return;
+      const agentTools = knownToolNames(agent.toolNames);
+      if (!validateToolNames(body.toolNames, agentTools, reply)) return;
+      if (!validateToolPolicies(body.toolPolicies, agentTools, reply)) return;
       /*
        * `guardrailsSource` and `toolPoliciesSource` remain BASELINE fields and
        * are rejected here. They select which other agent to inherit from, which

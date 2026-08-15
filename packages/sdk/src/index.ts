@@ -27,6 +27,19 @@ export {
   type RunAgentTaskOptions,
   type AgentTaskResult,
 } from './agent/runner.js';
+// --- the front door --------------------------------------------------------
+export {
+  DriftWatchAgent,
+  type DriftWatchAgentOptions,
+  type RunAgentOptions,
+} from './agent/driftwatch-agent.js';
+export {
+  ControlPlaneClient,
+  ControlPlaneError,
+  type ControlPlaneClientOptions,
+  type EffectiveAgentConfig,
+  type AgentDeclaration,
+} from './agent/control-plane.js';
 export {
   createAgentRuntime,
   type AgentRuntime,
@@ -148,6 +161,7 @@ export {
   gateToolCall,
   type GateToolCallOptions,
   type GateToolCallResult,
+  type ToolCallApprovalTransport,
 } from './autopilot/tool-call-gate.js';
 export {
   API_KEY_SCOPES,

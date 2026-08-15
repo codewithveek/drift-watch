@@ -28,7 +28,7 @@
  * longer to act on anyway. A future optimization, not a launch requirement.
  */
 import { randomUUID } from 'node:crypto';
-import type { StateStore, ToolCallApproval } from './types.js';
+import type { AgentDefinition, ApprovalStatus, ToolCallApproval } from './types.js';
 import type { ToolCallPolicyRule } from './tool-call-policy.js';
 import { evaluateToolCallPolicy } from './tool-call-policy.js';
 import { notifyAll, type DispatchLogger, type NotifierRegistry } from './notify-dispatch.js';
@@ -50,7 +50,7 @@ export interface GateToolCallOptions {
    * and the call fails closed (denied) with an explanatory reason rather than
    * silently proceeding.
    */
-  store?: StateStore;
+  store?: ToolCallApprovalTransport;
   notifiers?: NotifierRegistry;
   /** Defaults to 120s. Only consulted for `require_approval`. */
   approvalTimeoutMs?: number;
@@ -59,6 +59,30 @@ export interface GateToolCallOptions {
   pollIntervalMs?: number;
   abortSignal?: AbortSignal;
   logger?: DispatchLogger;
+}
+
+/**
+ * The narrow slice of storage this gate needs — four methods, not all 31 of
+ * `StateStore`.
+ *
+ * Declared separately so the gate can be backed by something that is not a
+ * database. An agent process using `DriftWatchAgent` talks to the control plane
+ * over HTTP and has no store at all; a `StateStore` still satisfies this
+ * structurally, so the reference server's existing in-process wiring is
+ * unchanged. This is what lets the SDK stop requiring a shared database to
+ * participate in human approvals.
+ */
+export interface ToolCallApprovalTransport {
+  createToolCallApproval(approval: ToolCallApproval): Promise<void>;
+  getToolCallApproval(id: string): Promise<ToolCallApproval | undefined>;
+  resolveToolCallApproval(
+    id: string,
+    status: Exclude<ApprovalStatus, 'pending'>,
+    resolvedBy: string,
+    channel: string,
+  ): Promise<ToolCallApproval | undefined>;
+  /** Used only to enrich the approval notification with the agent's name. */
+  getAgentDefinition(agentId: string): Promise<AgentDefinition | undefined>;
 }
 
 export type GateToolCallResult = { allowed: true } | { allowed: false; reason: string };

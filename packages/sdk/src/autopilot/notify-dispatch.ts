@@ -36,6 +36,13 @@ export function notifierForAction(
 
 export interface DispatchLogger {
   error: (obj: unknown, msg?: string) => void;
+  /**
+   * Optional so every existing caller (which only ever needed `error`) keeps
+   * satisfying this. Used for conditions that are degraded but not failures —
+   * an unreachable control plane that the agent deliberately runs through, for
+   * instance, which is not an error precisely because it is handled.
+   */
+  warn?: (obj: unknown, msg?: string) => void;
 }
 
 /** Fire-and-forget send to a single notifier; failures are logged, not thrown. */

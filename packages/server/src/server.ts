@@ -11,6 +11,7 @@ import { assertModelClientIsConfigured, loadDriftWatchConfigFromEnv } from '@dri
 import { registerRoutes } from './routes/agent.js';
 import { registerConsoleRoutes } from './routes/console.js';
 import { registerApiKeyRoutes } from './routes/api-keys.js';
+import { registerSdkRoutes } from './routes/sdk.js';
 import { registerIntegrationRoutes } from './routes/integrations.js';
 import { registerConsoleStatic } from './routes/static-console.js';
 import { createAuthGate } from './routes/auth.js';
@@ -121,6 +122,15 @@ await fastifyServer.register(
       recordAudit,
     });
     await registerApiKeyRoutes(api, { store: autopilot.store, authorize, recordAudit });
+    // The SDK-facing surface: sync, and the tool-call approval lifecycle an
+    // embedded agent needs now that it no longer shares this server's database.
+    await registerSdkRoutes(api, {
+      store: autopilot.store,
+      serverConfig,
+      driftWatchConfig,
+      authorize,
+      recordAudit,
+    });
   },
   { prefix: API_PREFIX },
 );

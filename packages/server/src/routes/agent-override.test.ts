@@ -203,6 +203,43 @@ describe('layered agent configuration', () => {
     expect(await store.getAgentOverride('payments')).toBeUndefined();
   });
 
+  it('lets the console gate a tool the SDK declared but this server has never heard of', async () => {
+    const { fastify, store } = await buildApp();
+    // A sync-style registration: the agent declares its OWN tools, which are
+    // not in this server's in-process registry.
+    await store.upsertAgent({
+      id: 'payments',
+      name: 'Payments',
+      createdAt: 1,
+      toolNames: ['issue_refund'],
+    });
+
+    const response = await fastify.inject({
+      method: 'PATCH',
+      url: '/agents/payments',
+      payload: { toolPolicies: [{ tool: 'issue_refund', action: 'deny', severity: 'high' }] },
+    });
+
+    // Validating against the server's demo registry instead of the agent's own
+    // declaration rejected this, which made the console unable to govern any
+    // SDK-registered agent at all — the exact agents it exists for.
+    expect(response.statusCode).toBe(200);
+    expect((await store.getAgentOverride('payments'))?.toolPolicies).toHaveLength(1);
+  });
+
+  it('still rejects a tool the agent never declared', async () => {
+    const { fastify } = await buildApp();
+    await register(fastify, { maxSteps: 1 });
+    const response = await fastify.inject({
+      method: 'PATCH',
+      url: '/agents/payments',
+      payload: { toolPolicies: [{ tool: 'no_such_tool', action: 'deny', severity: 'high' }] },
+    });
+    // Scoping validation to the agent's own tools must not mean abandoning it:
+    // a typo'd rule is a rule that silently never fires.
+    expect(response.statusCode).toBe(400);
+  });
+
   it('identity edits still write to the baseline, not the override', async () => {
     const { fastify, store } = await buildApp();
     await register(fastify, { maxSteps: 10 });
