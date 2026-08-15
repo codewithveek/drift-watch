@@ -1,8 +1,13 @@
 /**
  * In-memory StateStore — the zero-dependency default. Perfect for single-
  * process use (a standalone script, a single container); NOT suitable across
- * multiple processes, since each keeps its own state. For multi-process
- * deployments, use `RedisStateStore` from `@driftwatch/sdk/redis` instead.
+ * multiple processes, since each keeps its own state, and everything is lost on
+ * restart.
+ *
+ * For anything durable or multi-process, use `PostgresStateStore` (or the still
+ * supported `RedisStateStore`) from `@driftwatch/server`. Those are the control
+ * plane's storage and deliberately do not ship in this package — see the note in
+ * ./types.ts.
  */
 import type {
   ActionLogEntry,

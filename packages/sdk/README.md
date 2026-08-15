@@ -179,10 +179,11 @@ const config = DriftWatchConfigSchema.parse({
   human-in-the-loop approvals for control actions (pause/rollback/throttle/
   switch_model). Built entirely on the `StateStore`/`Notifier` interfaces
   below — no concrete I/O, so it costs nothing to import.
-- `MemoryStateStore` — the zero-dependency `StateStore` implementation
-  (single-process). For multi-process, `RedisStateStore` lives at the isolated
-  subpath `@driftwatch/sdk/redis`, with `ioredis` as an optional peer
-  dependency — importing the package root never pulls it in.
+- `MemoryStateStore` — the zero-dependency `StateStore` implementation, and the
+  only one in this package. It is single-process and loses everything on
+  restart. Durable backends (`PostgresStateStore`, `RedisStateStore`) are the
+  control plane's storage and live in `@driftwatch/server`; `StateStore` remains
+  an interface here so you can implement your own.
 - `evaluatePolicies` — the pure function mapping a `DriftReport` + policy
   config to a list of action intents.
 

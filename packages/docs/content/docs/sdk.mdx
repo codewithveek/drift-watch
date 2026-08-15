@@ -389,16 +389,33 @@ const scheduler = new AutopilotScheduler({
 scheduler.start();
 ```
 
-**State store.** `MemoryStateStore` is the zero-dependency, single-process
-default. For a multi-process deployment, use `RedisStateStore`. It lives at the
-isolated subpath `@driftwatch/sdk/redis`, so importing the SDK's package root
-never pulls in `ioredis`. Only code that imports this subpath needs it:
+**State store.** `StateStore` is an interface, and the SDK ships exactly one
+implementation: `MemoryStateStore`, which has no dependencies, runs in a single
+process, and loses everything on restart.
+
+Durable and multi-process backends — `PostgresStateStore` and `RedisStateStore` —
+live in `@driftwatch/server`, not here. They are the *control plane's* storage,
+and an agent running in a Lambda or a CI job has no business carrying a database
+client. This also keeps the dependency direction one-way: an agent talks to the
+control plane over HTTP, it does not share its database.
+
+If you need a different backend, implement the interface yourself — the same
+bring-your-own-implementation stance as `MetricsQuerySource`:
 
 ```ts
-import { RedisStateStore } from '@driftwatch/sdk/redis';
+import type { StateStore } from '@driftwatch/sdk';
 
-const store = new RedisStateStore(process.env.REDIS_URL!);
+class MyStateStore implements StateStore {
+  /* ... */
+}
 ```
+
+<Callout type="warn">
+  `@driftwatch/sdk/redis` was removed in v2, along with the optional `ioredis`
+  peer dependency. If you were importing it, import `RedisStateStore` from
+  `@driftwatch/server` instead — or move to Postgres, which now implements every
+  method including the leader lock and makes Redis unnecessary.
+</Callout>
 
 **Notifiers.** The SDK defines the `Notifier` interface and the dispatch helpers
 (`notifyAll`, `safeNotify`, `notifierForAction`). It contains no concrete channels.

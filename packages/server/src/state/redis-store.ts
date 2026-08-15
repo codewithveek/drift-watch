@@ -5,24 +5,42 @@
  * log — and a leader lock ensures only one process runs each scheduled drift
  * cycle (for the whole fleet, not per agent).
  *
- * Not exported from the package root — import from `@driftwatch/sdk/redis`.
- * `ioredis` is an OPTIONAL peer dependency: installing the core SDK never
- * pulls it in, so this is the one place in the SDK a consumer opts into a
- * concrete I/O dependency, and only if they import this subpath.
+ * ## Why this lives in the server and no longer in @driftwatch/sdk
+ *
+ * It used to ship as `@driftwatch/sdk/redis` with `ioredis` as an optional peer
+ * dependency. That was the wrong package: this is the CONTROL PLANE's storage,
+ * and an agent running in a Lambda or a CI job — the shape the SDK exists to
+ * serve — has no business carrying a Redis client, even an optional one. Moving
+ * it here makes the dependency direction one-way (an agent talks to the control
+ * plane over HTTP; it does not share its database) and lets the SDK and the
+ * server version independently, which they could not do while they shared a
+ * storage implementation.
+ *
+ * `StateStore` itself remains a TYPE in the SDK, so anyone can still implement
+ * their own backend — the same bring-your-own-implementation stance as
+ * `MetricsQuerySource`.
+ *
+ * ## When to use it
+ *
+ * Postgres is the recommended backend and implements every method including the
+ * leader lock, so Redis is no longer required for multi-process deployments.
+ * This remains supported for deployments already running Redis. Note it caps
+ * drift history at 500 entries and the audit log at 2000 — durable, unbounded
+ * history is what PostgresStateStore is for.
  */
 import { Redis } from 'ioredis';
 import type {
   ActionLogEntry,
   AgentDefinition,
   AgentRuntimeState,
+  ApiKeyRecord,
   Approval,
   ApprovalStatus,
   AuditEvent,
   DriftHistoryEntry,
   StateStore,
   ToolCallApproval,
-} from './types.js';
-import type { ApiKeyRecord } from './api-keys.js';
+} from '@driftwatch/sdk';
 
 const HISTORY_CAP = 500;
 

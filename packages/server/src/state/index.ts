@@ -22,14 +22,14 @@
  * being ignored rather than silently mis-attributing behaviour to it.
  */
 import { MemoryStateStore, type StateStore } from '@driftwatch/sdk';
-import { RedisStateStore } from '@driftwatch/sdk/redis';
 import { createDatabase, type Database } from '../db/client.js';
 import { runMigrations } from '../db/migrate.js';
 import { seedOrganization } from '../db/seed.js';
 import { PostgresStateStore } from '../db/postgres-store.js';
+import { RedisStateStore } from './redis-store.js';
 
 export { MemoryStateStore } from '@driftwatch/sdk';
-export { RedisStateStore } from '@driftwatch/sdk/redis';
+export { RedisStateStore } from './redis-store.js';
 export { PostgresStateStore } from '../db/postgres-store.js';
 
 export type StateStoreKind = 'postgres' | 'redis' | 'memory';

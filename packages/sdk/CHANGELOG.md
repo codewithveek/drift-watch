@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Breaking Changes
+
+- **Removed the `@driftwatch/sdk/redis` subpath and the optional `ioredis` peer
+  dependency.** `RedisStateStore` now lives in `@driftwatch/server` alongside the
+  new `PostgresStateStore`.
+
+  The subpath existed so that importing the SDK root never pulled in `ioredis`,
+  which solved the dependency-weight problem but not the design one: a Redis
+  client is the *control plane's* storage, and the agent processes this SDK
+  exists to serve — a Lambda, a CI job, a one-shot CLI — should never carry one
+  at all. Moving it makes the dependency direction one-way (an agent talks to the
+  control plane over HTTP; it does not share its database) and lets the SDK and
+  the server version independently, which they could not do while sharing a
+  storage implementation.
+
+  The SDK now declares **no peer dependencies at all**.
+
+  **Migration:** import `RedisStateStore` from `@driftwatch/server`, or switch to
+  `PostgresStateStore`, which implements every `StateStore` method — including
+  the leader lock and cooldowns that were Redis's reason for being here — and
+  unlike Redis keeps drift history and the audit log uncapped and durable across
+  restarts.
+
+  `StateStore` itself is unchanged and still exported from the SDK root as a
+  type, so custom implementations keep working.
+
 ## 0.4.0
 
 ### Minor Changes

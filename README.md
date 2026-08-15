@@ -155,7 +155,7 @@ compute drift; the same signals make clean dashboard panels. See the
 
 | Package | What it is |
 |---|---|
-| **[`@driftwatch/sdk`](./packages/sdk)** | **The product.** Telemetry, drift detection, guardrails, and the full Autopilot orchestration engine (`ApprovalService`, `AutopilotScheduler`, `MemoryStateStore`, and `RedisStateStore` at the isolated `@driftwatch/sdk/redis` subpath). Zero provider SDKs, zero required dependencies. |
+| **[`@driftwatch/sdk`](./packages/sdk)** | **The product.** Telemetry, drift detection, guardrails, and the pure Autopilot orchestration engine (`ApprovalService`, `AutopilotScheduler`, `MemoryStateStore`). Zero provider SDKs, zero peer dependencies — durable state stores live in the server, not here. |
 | **[`@driftwatch/autopilot`](./packages/autopilot)** | Concrete Slack, Telegram, and webhook notifiers, plus inbound-webhook verification. A companion to the SDK — bring it in only if you use those channels. |
 | **[`@driftwatch/server`](./packages/server)** | A reference Fastify service built on `@driftwatch/sdk` and `@driftwatch/autopilot`: `/run` and `/drift`, the control-plane API, and shared state. The fastest way to try DriftWatch, or a blueprint for building your own. |
 | **[`@driftwatch/console`](./packages/console)** | The operator web console for the reference server. Served at `/console/`. |

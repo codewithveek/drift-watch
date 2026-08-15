@@ -5,11 +5,13 @@
  * `ApprovalService`, `AutopilotScheduler`, `executeControlAction`, and the
  * notify-dispatch helpers — lives alongside them in this package, since none
  * of it does concrete I/O: it only calls the `StateStore`/`Notifier`
- * interfaces defined here. Two things that DO require concrete I/O are kept
- * out of the package root:
- *   - `RedisStateStore` needs `ioredis` — it's an isolated subpath export at
- *     `@driftwatch/sdk/redis` with ioredis as an optional peer dependency, so
- *     importing the core SDK never pulls it in.
+ * interfaces defined here. Everything that DOES require concrete I/O is kept
+ * out of this package entirely:
+ *   - `RedisStateStore` and `PostgresStateStore` live in `@driftwatch/server`.
+ *     They are the CONTROL PLANE's storage, and an agent running in a Lambda or
+ *     a CI job has no business carrying a database client. `StateStore` stays
+ *     here as a type so anyone can implement their own backend — the same
+ *     bring-your-own-implementation stance as `MetricsQuerySource`.
  *   - Concrete Slack/Telegram/webhook `Notifier`s and inbound-webhook
  *     signature verification live in the companion `@driftwatch/autopilot`
  *     package, since they track those providers' APIs independently of this

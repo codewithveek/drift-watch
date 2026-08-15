@@ -192,9 +192,6 @@ importers:
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.1
-      ioredis:
-        specifier: ^5.4.1
-        version: 5.11.1
       typescript:
         specifier: ^5.6.0
         version: 5.9.3

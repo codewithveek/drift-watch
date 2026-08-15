@@ -35,10 +35,6 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./redis": {
-      "types": "./dist/redis.d.ts",
-      "import": "./dist/redis.js"
-    },
     "./preload": {
       "types": "./dist/preload.d.ts",
       "import": "./dist/preload.js"
@@ -55,7 +51,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "pnpm clean && tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "prepublishOnly": "pnpm build && pnpm test"
@@ -74,17 +71,8 @@
     "ai": "^7.0.31",
     "zod": "^3.25.76"
   },
-  "peerDependencies": {
-    "ioredis": "^5.4.1"
-  },
-  "peerDependenciesMeta": {
-    "ioredis": {
-      "optional": true
-    }
-  },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "ioredis": "^5.4.1",
     "typescript": "^5.6.0",
     "vitest": "^4.1.10"
   }
