@@ -35,6 +35,7 @@ import { and, asc, desc, eq, isNull, lte } from 'drizzle-orm';
 import type {
   ActionLogEntry,
   AgentDefinition,
+  AgentOverride,
   AgentRuntimeState,
   ApiKeyRecord,
   Approval,
@@ -48,6 +49,7 @@ import type { Database } from './client.js';
 import {
   DEFAULT_ORGANIZATION_ID,
   actionLog,
+  agentOverrides,
   agentState,
   agents,
   apiKeys,
@@ -244,6 +246,76 @@ export class PostgresStateStore implements StateStore {
       .where(and(eq(agents.id, agentId), eq(agents.organizationId, this.organizationId)))
       .limit(1);
     return row ? toAgentDefinition(row) : undefined;
+  }
+
+  // --- console overrides ----------------------------------------------------
+
+  async getAgentOverride(agentId: string): Promise<AgentOverride | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(agentOverrides)
+      .where(
+        and(
+          eq(agentOverrides.agentId, agentId),
+          eq(agentOverrides.organizationId, this.organizationId),
+        ),
+      )
+      .limit(1);
+    if (!row) return undefined;
+    return {
+      agentId: row.agentId,
+      guardrails: row.guardrails ?? undefined,
+      toolNames: row.toolNames ?? undefined,
+      toolPolicies: row.toolPolicies ?? undefined,
+      driftDetectionEnabled: row.driftDetectionEnabled ?? undefined,
+      updatedAt: row.updatedAt,
+      updatedBy: row.updatedBy,
+    };
+  }
+
+  /**
+   * Full replace, so a field the caller omitted is genuinely cleared rather than
+   * lingering from a previous edit. That is what makes "stop overriding just
+   * this one field" expressible at all.
+   */
+  async setAgentOverride(override: AgentOverride): Promise<void> {
+    const values = {
+      agentId: override.agentId,
+      organizationId: this.organizationId,
+      guardrails: override.guardrails ?? null,
+      toolNames: override.toolNames ?? null,
+      toolPolicies: override.toolPolicies ?? null,
+      driftDetectionEnabled: override.driftDetectionEnabled ?? null,
+      updatedAt: override.updatedAt,
+      updatedBy: override.updatedBy,
+    };
+    await this.db
+      .insert(agentOverrides)
+      .values(values)
+      .onConflictDoUpdate({
+        target: agentOverrides.agentId,
+        set: {
+          guardrails: values.guardrails,
+          toolNames: values.toolNames,
+          toolPolicies: values.toolPolicies,
+          driftDetectionEnabled: values.driftDetectionEnabled,
+          updatedAt: values.updatedAt,
+          updatedBy: values.updatedBy,
+        },
+      });
+  }
+
+  async clearAgentOverride(agentId: string): Promise<boolean> {
+    const deleted = await this.db
+      .delete(agentOverrides)
+      .where(
+        and(
+          eq(agentOverrides.agentId, agentId),
+          eq(agentOverrides.organizationId, this.organizationId),
+        ),
+      )
+      .returning({ agentId: agentOverrides.agentId });
+    return deleted.length > 0;
   }
 
   async listAgents(): Promise<AgentDefinition[]> {

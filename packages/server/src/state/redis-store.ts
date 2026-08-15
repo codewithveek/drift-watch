@@ -32,6 +32,7 @@ import { Redis } from 'ioredis';
 import type {
   ActionLogEntry,
   AgentDefinition,
+  AgentOverride,
   AgentRuntimeState,
   ApiKeyRecord,
   Approval,
@@ -54,6 +55,7 @@ const KEY = {
   apiKeysIndex: 'dw:apikeys',
   auditLog: 'dw:audit:log',
   agentDef: (agentId: string) => `dw:agent:${agentId}:def`,
+  agentOverride: (agentId: string) => `dw:agent:${agentId}:override`,
   agentsIndex: 'dw:agents',
   agentState: (agentId: string) => `dw:agent:${agentId}:state`,
   approval: (id: string) => `dw:approval:${id}`,
@@ -228,6 +230,21 @@ export class RedisStateStore implements StateStore {
   async getAgentDefinition(agentId: string): Promise<AgentDefinition | undefined> {
     const raw = await this.redis.get(KEY.agentDef(agentId));
     return raw ? (JSON.parse(raw) as AgentDefinition) : undefined;
+  }
+
+  async getAgentOverride(agentId: string): Promise<AgentOverride | undefined> {
+    const raw = await this.redis.get(KEY.agentOverride(agentId));
+    return raw ? (JSON.parse(raw) as AgentOverride) : undefined;
+  }
+
+  async setAgentOverride(override: AgentOverride): Promise<void> {
+    await this.redis.set(KEY.agentOverride(override.agentId), JSON.stringify(override));
+  }
+
+  async clearAgentOverride(agentId: string): Promise<boolean> {
+    // DEL returns the number of keys removed, which is exactly the
+    // "was there anything to revert" answer the interface asks for.
+    return (await this.redis.del(KEY.agentOverride(agentId))) > 0;
   }
 
   async listAgents(): Promise<AgentDefinition[]> {

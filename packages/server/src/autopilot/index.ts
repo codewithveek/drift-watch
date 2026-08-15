@@ -18,6 +18,7 @@ import type { ServerConfig } from '../config/server-config.js';
 import { loadPolicyConfig } from '../config/policy-loader.js';
 import { createMetricsQuerySourceFor } from '../config/metrics-source.js';
 import { createStateStore } from '../state/index.js';
+import { listEffectiveAgents } from '../state/effective-agent.js';
 import type { Database } from '../db/client.js';
 import { createNotifiers, type NotifierRegistry } from '../notify/index.js';
 
@@ -94,6 +95,8 @@ export async function createAutopilot(options: {
 
   const scheduler = new AutopilotScheduler({
     store,
+    // Scan what is actually in force, not just what the code declared.
+    listAgents: () => listEffectiveAgents(store),
     notifiers,
     approvalService,
     modelClient,

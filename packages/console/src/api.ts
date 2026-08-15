@@ -30,6 +30,7 @@ import type {
   DriftHistoryEntry,
   DriftSeverity,
   PublicApiKey,
+  OverridableField,
   ToolCallApproval,
   ToolCallPolicyRule,
 } from '@driftwatch/sdk';
@@ -47,6 +48,7 @@ export type {
   DriftHistoryEntry,
   DriftSeverity,
   PublicApiKey,
+  OverridableField,
   ToolCallApproval,
   ToolCallPolicyRule,
 };
@@ -61,6 +63,13 @@ export interface StateResponse {
   toolNames: string[];
   /** Resolved union of this agent's policies and any toolPoliciesSource's. */
   toolPolicies: ToolCallPolicyRule[];
+  /**
+   * Which fields an operator has overridden in the console, layered over what
+   * the agent's own code declared. Drives the "overridden from code" markers
+   * and the revert affordance — without it the difference between declared and
+   * effective configuration would be invisible.
+   */
+  overriddenFields: OverridableField[];
 }
 
 /**
@@ -197,6 +206,9 @@ export const client = {
       body: JSON.stringify(patch),
     }),
   getTools: () => api<{ tools: ToolMetadata[] }>('/tools'),
+  /** Drops every console override so the agent falls back to what its code declares. */
+  revertAgentOverride: (agentId: string) =>
+    del<{ cleared: boolean; agent: AgentDefinition }>(`/agents/${agentId}/override`),
 
   // --- per-agent state / history -------------------------------------------
   getState: (agentId: string) => api<StateResponse>(`/agents/${agentId}/state`),

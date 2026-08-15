@@ -21,6 +21,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import type {
   AgentConfig,
   AgentDefinition,
+  AgentOverride,
   DriftWatchConfig,
   StateStore,
   ApprovalService,
@@ -29,8 +30,11 @@ import type {
 } from '@driftwatch/sdk';
 import {
   AGENT_ID_PATTERN,
+  applyAgentOverride,
   executeControlAction,
   generateAgentSlug,
+  isEmptyOverride,
+  overriddenFields,
   resolveAgentConfig,
   resolveToolCallPolicies,
 } from '@driftwatch/sdk';
@@ -38,6 +42,7 @@ import type { ServerConfig } from '../config/server-config.js';
 import { visibleToPrincipal, type AuthorizeFn } from './auth.js';
 import { describeChangedFields, touchesPolicy, type AuditRecorder } from './audit.js';
 import { allToolMetadata, allToolNames } from '../tools.js';
+import { listEffectiveAgents } from '../state/effective-agent.js';
 
 const HISTORY_LIMIT = 100;
 const AUDIT_LIMIT = 200;
@@ -145,7 +150,10 @@ export async function registerConsoleRoutes(
     if (!principal) return;
     // Narrowed rather than 403'd: an agent-scoped key listing the fleet is a
     // legitimate request for "the agents I can see", not an access violation.
-    return { agents: visibleToPrincipal(principal, await store.listAgents()) };
+    // Effective config: the fleet view counts tool-call rules in force, and a
+    // count taken from baselines would contradict what each agent's own page
+    // shows.
+    return { agents: visibleToPrincipal(principal, await listEffectiveAgents(store)) };
   });
 
   fastifyServer.post<{ Body: AgentWriteBody }>('/agents', async (request, reply) => {
@@ -253,6 +261,21 @@ export async function registerConsoleRoutes(
 
       if (!validateToolNames(body.toolNames, reply)) return;
       if (!validateToolPolicies(body.toolPolicies, reply)) return;
+      /*
+       * `guardrailsSource` and `toolPoliciesSource` remain BASELINE fields and
+       * are rejected here. They select which other agent to inherit from, which
+       * is a structural composition decision belonging with the code that
+       * declares the fleet — not an incident-time toggle. Allowing them as
+       * overrides would also make resolution two-dimensional (whose baseline,
+       * then whose override) for no operator benefit.
+       */
+      if (body.guardrailsSource !== undefined || body.toolPoliciesSource !== undefined) {
+        return reply.code(400).send({
+          error:
+            'guardrailsSource and toolPoliciesSource are declared by the agent, not overridable here',
+        });
+      }
+
       if (
         body.guardrailsSource &&
         !(await validateAgentReference(store, body.guardrailsSource, agent.id, 'guardrailsSource', reply))
@@ -272,27 +295,66 @@ export async function registerConsoleRoutes(
         return;
       }
 
-      const updated: AgentDefinition = {
-        ...agent,
-        ...(body.name !== undefined ? { name: body.name } : {}),
-        ...(body.owner !== undefined ? { owner: body.owner } : {}),
-        ...(body.serviceName !== undefined ? { serviceName: body.serviceName } : {}),
-        // Nested partial merge: patching just one guardrail field doesn't
-        // clobber previously-set ones.
+      /*
+       * A console edit writes an OVERRIDE, not the baseline.
+       *
+       * The baseline is what an SDK client pushes on every deploy. If this
+       * handler wrote there, the next deploy would silently revert an
+       * operator's change — and an operator who tightened a spend cap during an
+       * incident would have no way to know it had been undone. Layering the two
+       * means both writers keep working: code declares intent, the console
+       * overrides it, and reverting is deleting the override rather than
+       * guessing what the code used to say. See @driftwatch/sdk's
+       * agent-override.ts for the full reasoning.
+       *
+       * Identity fields (name/owner/serviceName) are the exception and still
+       * write to the baseline: they are descriptive rather than governing, and
+       * giving the registry's identity two writers would mean an agent whose
+       * displayed name depends on which record you read.
+       */
+      const identityChanged =
+        body.name !== undefined || body.owner !== undefined || body.serviceName !== undefined;
+      if (identityChanged) {
+        await store.upsertAgent({
+          ...agent,
+          ...(body.name !== undefined ? { name: body.name } : {}),
+          ...(body.owner !== undefined ? { owner: body.owner } : {}),
+          ...(body.serviceName !== undefined ? { serviceName: body.serviceName } : {}),
+        });
+      }
+
+      const existingOverride = await store.getAgentOverride(agent.id);
+      const nextOverride: AgentOverride = {
+        agentId: agent.id,
+        ...existingOverride,
+        // Nested partial merge, so patching one guardrail doesn't clobber
+        // another the operator set earlier in the same session.
         ...(body.guardrails !== undefined
-          ? { guardrails: { ...agent.guardrails, ...body.guardrails } }
+          ? { guardrails: { ...existingOverride?.guardrails, ...body.guardrails } }
           : {}),
-        ...(body.guardrailsSource !== undefined ? { guardrailsSource: body.guardrailsSource } : {}),
         ...(body.toolNames !== undefined ? { toolNames: body.toolNames } : {}),
+        // Full replace, not a merge — a rule LIST composes by "which rules
+        // apply", unlike guardrails' flat-record per-field merge above.
+        ...(body.toolPolicies !== undefined ? { toolPolicies: body.toolPolicies } : {}),
         ...(body.driftDetectionEnabled !== undefined
           ? { driftDetectionEnabled: body.driftDetectionEnabled }
           : {}),
-        // Full replace, not a merge — a rule LIST composes by "which rules
-        // apply," unlike guardrails' flat-record per-field merge above.
-        ...(body.toolPolicies !== undefined ? { toolPolicies: body.toolPolicies } : {}),
-        ...(body.toolPoliciesSource !== undefined ? { toolPoliciesSource: body.toolPoliciesSource } : {}),
+        updatedAt: Date.now(),
+        updatedBy: principal.id,
       };
-      await store.upsertAgent(updated);
+
+      if (isEmptyOverride(nextOverride)) {
+        // Nothing is actually overridden any more. Deleting rather than storing
+        // an all-empty row keeps the console's "overridden" badge honest.
+        await store.clearAgentOverride(agent.id);
+      } else {
+        await store.setAgentOverride(nextOverride);
+      }
+
+      const updated = applyAgentOverride(
+        identityChanged ? ((await store.getAgentDefinition(agent.id)) ?? agent) : agent,
+        isEmptyOverride(nextOverride) ? undefined : nextOverride,
+      );
       const changedFields = describeChangedFields(body as Record<string, unknown>);
       await recordAudit(
         principal,
@@ -319,13 +381,59 @@ export async function registerConsoleRoutes(
 
   // --- per-agent state/history/approvals/log --------------------------------
 
+  /**
+   * "Revert to code" — drop every console override so the agent falls back to
+   * what its own definition declares.
+   *
+   * A DELETE rather than a PATCH-with-nulls because that is what reverting
+   * actually is: the baseline was never lost, so there is nothing to
+   * reconstruct. It needs `policy:write` (not merely `agents:write`) because
+   * discarding an override can LOOSEN a guardrail an operator deliberately
+   * tightened, which is a policy change in the dangerous direction.
+   */
+  fastifyServer.delete<{ Params: { agentId: string } }>(
+    '/agents/:agentId/override',
+    async (request, reply) => {
+      const principal = await authorize(request, reply, {
+        scope: ['agents:write', 'policy:write'],
+        agentId: request.params.agentId,
+      });
+      if (!principal) return;
+      const agent = await requireAgent(store, request.params.agentId, reply);
+      if (!agent) return;
+
+      const cleared = await store.clearAgentOverride(agent.id);
+      if (cleared) {
+        await recordAudit(
+          principal,
+          {
+            action: 'policy.update',
+            target: agent.id,
+            agentId: agent.id,
+            summary: 'reverted console overrides to the agent-declared configuration',
+          },
+          request.log,
+        );
+      }
+      // `cleared: false` (nothing was overridden) is a successful no-op, not a
+      // 404 — the caller's intent is satisfied either way.
+      return { cleared, agent };
+    },
+  );
+
   fastifyServer.get<{ Params: { agentId: string } }>(
     '/agents/:agentId/state',
     async (request, reply) => {
       if (!(await authorize(request, reply, { scope: 'read', agentId: request.params.agentId })))
         return;
-      const agent = await requireAgent(store, request.params.agentId, reply);
-      if (!agent) return;
+      const baseline = await requireAgent(store, request.params.agentId, reply);
+      if (!baseline) return;
+      // Everything below reads the EFFECTIVE agent: code-declared baseline with
+      // the console's overrides layered on. Resolving here rather than at each
+      // use site is what guarantees the gate, the scheduler and this display
+      // never disagree about what is actually in force.
+      const override = await store.getAgentOverride(baseline.id);
+      const agent = applyAgentOverride(baseline, override);
       const sourceAgent = agent.guardrailsSource
         ? await store.getAgentDefinition(agent.guardrailsSource)
         : undefined;
@@ -345,6 +453,10 @@ export async function registerConsoleRoutes(
         guardrails: resolveAgentConfig(agent, driftWatchConfig, sourceAgent),
         toolNames: agent.toolNames ?? allToolNames,
         toolPolicies: resolveToolCallPolicies(agent, sourceAgentForTools),
+        // Which fields an operator has overridden, so the console can mark them
+        // and offer "revert to code" rather than leaving the difference between
+        // declared and effective config invisible.
+        overriddenFields: overriddenFields(override),
       };
     },
   );

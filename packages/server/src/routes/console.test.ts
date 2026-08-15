@@ -403,6 +403,7 @@ describe('response envelope shapes (pinned for packages/console/src/api.ts)', ()
       'agent',
       'autopilot',
       'guardrails',
+      'overriddenFields',
       'toolNames',
       'toolPolicies',
     ]);

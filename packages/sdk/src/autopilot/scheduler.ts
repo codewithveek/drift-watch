@@ -52,6 +52,12 @@ export interface AgentCycleResult {
 
 export interface AutopilotSchedulerOptions {
   store: StateStore;
+  /**
+   * Supplies the agents to scan. Defaults to `store.listAgents()`, which
+   * returns code-declared baselines; a control plane with layered console
+   * overrides passes a resolver that applies them (see runCycle).
+   */
+  listAgents?: () => Promise<AgentDefinition[]>;
   notifiers: NotifierRegistry;
   approvalService: ApprovalService;
   modelClient: ModelClient;
@@ -123,7 +129,13 @@ export class AutopilotScheduler {
    * POST /drift/scan can trigger a manual run.
    */
   async runCycle(trigger: string): Promise<{ results: AgentCycleResult[] }> {
-    const agents = await this.options.store.listAgents();
+    // `listAgents` is injectable because `store.listAgents()` returns the
+    // code-declared BASELINE, and a drift cycle must judge an agent against the
+    // configuration actually in force. Without this, an operator who tightened
+    // a guardrail in the console would still be scanned against the looser
+    // value their code declares — the autonomous loop and the human would be
+    // acting on different truths. The server passes `listEffectiveAgents`.
+    const agents = await (this.options.listAgents?.() ?? this.options.store.listAgents());
     const results: AgentCycleResult[] = [];
     for (const agent of agents) {
       results.push(await this.runAgentCycle(agent, trigger));

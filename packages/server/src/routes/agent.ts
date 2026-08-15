@@ -11,6 +11,7 @@ import {
   type NotifierRegistry,
 } from '@driftwatch/sdk';
 import type { ServerConfig } from '../config/server-config.js';
+import { getEffectiveAgent } from '../state/effective-agent.js';
 import type { AuthorizeFn } from './auth.js';
 import { createMetricsQuerySourceFor } from '../config/metrics-source.js';
 import { buildAgentTools } from '../tools.js';
@@ -69,7 +70,9 @@ export async function registerRoutes(
   }
 
   async function runTask(agentId: string, prompt: string) {
-    const agent = await store.getAgentDefinition(agentId);
+    // Effective, not baseline: an operator's console override must govern the
+    // very next run, which is the entire promise of live editing.
+    const agent = await getEffectiveAgent(store, agentId);
     if (!agent) throw new AgentNotFoundError(agentId);
 
     const sourceAgent = agent.guardrailsSource
@@ -89,7 +92,7 @@ export async function registerRoutes(
     // on every call — that's what makes a control-plane PATCH apply to the
     // very next run with no restart and no cache to invalidate.
     const runtime = createAgentRuntime({
-      agent: async () => (await store.getAgentDefinition(agentId)) ?? agent,
+      agent: async () => (await getEffectiveAgent(store, agentId)) ?? agent,
       config: driftWatchConfig,
       store,
       notifiers,
@@ -109,7 +112,7 @@ export async function registerRoutes(
   }
 
   async function runDrift(agentId: string) {
-    const agent = await store.getAgentDefinition(agentId);
+    const agent = await getEffectiveAgent(store, agentId);
     if (!agent) throw new AgentNotFoundError(agentId);
 
     const metricsQuerySource = createMetricsQuerySourceFor(driftWatchConfig.driftDetection, agent);

@@ -22,6 +22,7 @@ import type { DriftVerdict } from '../drift/detector.js';
 import type { AgentConfig } from '../config/schema.js';
 import type { ToolCallPolicyRule } from './tool-call-policy.js';
 import type { ApiKeyRecord } from './api-keys.js';
+import type { AgentOverride } from './agent-override.js';
 
 /** Every remediation action Autopilot knows how to intend. */
 export const ACTION_TYPES = [
@@ -364,10 +365,26 @@ export interface StateStore {
   listAuditEvents(limit: number, agentId?: string): Promise<AuditEvent[]>;
 
   // --- agent registry -----------------------------------------------------
-  /** Idempotent create-or-update, keyed by `definition.id`. */
+  /**
+   * Idempotent create-or-update of the CODE-DECLARED BASELINE, keyed by
+   * `definition.id`. This is what an SDK client pushes on every deploy;
+   * operator edits go to `setAgentOverride` and are layered on top at read
+   * time (see ./agent-override.ts).
+   *
+   * `createdAt` is preserved from any existing record — a client re-registering
+   * with a fresh `Date.now()` must not reset when the agent was first seen.
+   */
   upsertAgent(definition: AgentDefinition): Promise<void>;
+  /** The baseline as stored, WITHOUT overrides applied. */
   getAgentDefinition(agentId: string): Promise<AgentDefinition | undefined>;
   listAgents(): Promise<AgentDefinition[]>;
+
+  // --- console overrides ----------------------------------------------------
+  getAgentOverride(agentId: string): Promise<AgentOverride | undefined>;
+  /** Full replace of the override record, not a merge — the caller composes it. */
+  setAgentOverride(override: AgentOverride): Promise<void>;
+  /** "Revert to code". Returns false when there was nothing to clear. */
+  clearAgentOverride(agentId: string): Promise<boolean>;
 
   // --- runtime state --------------------------------------------------------
   getAgentState(agentId: string): Promise<AgentRuntimeState>;

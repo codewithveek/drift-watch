@@ -9,6 +9,7 @@
  * plane's storage and deliberately do not ship in this package — see the note in
  * ./types.ts.
  */
+import type { AgentOverride } from './agent-override.js';
 import type {
   ActionLogEntry,
   AgentDefinition,
@@ -37,6 +38,7 @@ function defaultAgentState(): AgentRuntimeState {
 
 export class MemoryStateStore implements StateStore {
   private readonly agents = new Map<string, AgentDefinition>();
+  private readonly agentOverrides = new Map<string, AgentOverride>();
   private readonly agentState = new Map<string, AgentRuntimeState>();
   private readonly approvals = new Map<string, Approval>();
   private readonly pendingByAgent = new Map<string, Set<string>>();
@@ -120,6 +122,19 @@ export class MemoryStateStore implements StateStore {
   async getAgentDefinition(agentId: string): Promise<AgentDefinition | undefined> {
     const definition = this.agents.get(agentId);
     return definition ? { ...definition } : undefined;
+  }
+
+  async getAgentOverride(agentId: string): Promise<AgentOverride | undefined> {
+    const override = this.agentOverrides.get(agentId);
+    return override ? { ...override } : undefined;
+  }
+
+  async setAgentOverride(override: AgentOverride): Promise<void> {
+    this.agentOverrides.set(override.agentId, { ...override });
+  }
+
+  async clearAgentOverride(agentId: string): Promise<boolean> {
+    return this.agentOverrides.delete(agentId);
   }
 
   async listAgents(): Promise<AgentDefinition[]> {

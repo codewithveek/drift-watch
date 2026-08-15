@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import { tool } from 'ai';
 import { z } from 'zod';
-import { toRuntimeRule, type Paths, type PolicyRule, type ValueAtPath } from './policy-authoring.js';
+import { toRuntimeRule, type Paths, type ToolPolicy, type ValueAtPath } from './policy-authoring.js';
 
 const TOOLS = {
   issue_refund: tool({
@@ -29,7 +29,7 @@ const TOOLS = {
 };
 
 type Tools = typeof TOOLS;
-type Rule = PolicyRule<Tools>;
+type Rule = ToolPolicy<Tools>;
 
 describe('tool names', () => {
   it('accepts a declared tool', () => {
@@ -201,7 +201,7 @@ describe('an agent with no declared tools', () => {
   it('falls back to accepting any tool name', () => {
     // Policies can target tools registered by another process, so `never` here
     // would make every rule uncompilable.
-    type Untyped = PolicyRule<Record<string, never>>;
+    type Untyped = ToolPolicy<Record<string, never>>;
     const rule: Untyped = { tool: 'anything_at_all', action: 'deny' };
     expect(rule.tool).toBe('anything_at_all');
   });

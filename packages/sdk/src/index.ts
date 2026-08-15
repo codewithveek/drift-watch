@@ -103,6 +103,26 @@ export {
   type StateStore,
   type Notifier,
 } from './autopilot/types.js';
+// --- layered agent config (code baseline <- console overrides) --------------
+export {
+  applyAgentOverride,
+  overriddenFields,
+  isEmptyOverride,
+  OVERRIDABLE_FIELDS,
+  type AgentOverride,
+  type OverridableField,
+} from './autopilot/agent-override.js';
+// --- typed policy authoring (compile-time overlay on ToolCallPolicyRule) ----
+export {
+  toRuntimeRule,
+  type ToolPolicy,
+  type Condition,
+  type FieldPath,
+  type InputOf,
+  type Paths,
+  type ToolName,
+  type ValueAtPath,
+} from './agent/policy-authoring.js';
 export {
   evaluatePolicies,
   computeWindowDeltas,

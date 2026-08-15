@@ -134,7 +134,7 @@ interface RuleBase {
  * by `field`. Union size is (paths + 1) summed across tools — tens of members
  * for a realistic agent, which TypeScript handles comfortably.
  */
-export type PolicyRule<TTools extends ToolSet> = {
+export type ToolPolicy<TTools extends ToolSet> = {
   [Name in ToolName<TTools>]:
     | (RuleBase & {
         tool: Name;
@@ -164,7 +164,7 @@ const DEFAULT_SEVERITY: DriftSeverity = 'medium';
  * so the severity default lives in exactly one place, and so a future divergence
  * between the two shapes surfaces here as a type error instead of at runtime.
  */
-export function toRuntimeRule<TTools extends ToolSet>(rule: PolicyRule<TTools>): ToolCallPolicyRule {
+export function toRuntimeRule<TTools extends ToolSet>(rule: ToolPolicy<TTools>): ToolCallPolicyRule {
   const authored = rule as RuleBase & {
     tool: string;
     field?: string;

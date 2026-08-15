@@ -247,6 +247,83 @@ function describeStateStore(backend: string, getStore: () => StateStore): void {
       expect((await store.listAgents()).map((agent) => agent.id)).toEqual(['first', 'second']);
     });
 
+    // --- console overrides --------------------------------------------------
+
+    it('stores, reads back and clears an override', async () => {
+      const store = getStore();
+      await store.upsertAgent(anAgent());
+      expect(await store.getAgentOverride('agent-a')).toBeUndefined();
+
+      await store.setAgentOverride({
+        agentId: 'agent-a',
+        guardrails: { maxSteps: 3 },
+        updatedAt: 5_000,
+        updatedBy: 'user-1',
+      });
+      expect(await store.getAgentOverride('agent-a')).toMatchObject({
+        guardrails: { maxSteps: 3 },
+        updatedBy: 'user-1',
+      });
+
+      expect(await store.clearAgentOverride('agent-a')).toBe(true);
+      expect(await store.getAgentOverride('agent-a')).toBeUndefined();
+      // "Revert to code" twice is not an error, it is a no-op.
+      expect(await store.clearAgentOverride('agent-a')).toBe(false);
+    });
+
+    it('replaces the override wholesale rather than merging into it', async () => {
+      const store = getStore();
+      await store.upsertAgent(anAgent());
+      await store.setAgentOverride({
+        agentId: 'agent-a',
+        guardrails: { maxSteps: 3 },
+        toolPolicies: [{ tool: 'x', action: 'deny', severity: 'high' }],
+        updatedAt: 1,
+        updatedBy: 'user-1',
+      });
+      // Dropping toolPolicies must actually stop overriding it — otherwise
+      // "stop overriding just this field" would be inexpressible and a stale
+      // rule would keep gating calls the operator thought they had released.
+      await store.setAgentOverride({
+        agentId: 'agent-a',
+        guardrails: { maxSteps: 3 },
+        updatedAt: 2,
+        updatedBy: 'user-1',
+      });
+
+      const override = await store.getAgentOverride('agent-a');
+      expect(override?.toolPolicies).toBeUndefined();
+      expect(override?.guardrails).toEqual({ maxSteps: 3 });
+    });
+
+    it('keeps the baseline untouched when an override is written', async () => {
+      const store = getStore();
+      await store.upsertAgent(anAgent({ guardrails: { maxSteps: 10 } }));
+      await store.setAgentOverride({
+        agentId: 'agent-a',
+        guardrails: { maxSteps: 2 },
+        updatedAt: 1,
+        updatedBy: 'user-1',
+      });
+      // The whole point of layering: a redeploy re-pushes the baseline and the
+      // operator's override still wins, because they live in different records.
+      expect((await store.getAgentDefinition('agent-a'))?.guardrails).toEqual({ maxSteps: 10 });
+    });
+
+    it('survives a re-registration of the baseline', async () => {
+      const store = getStore();
+      await store.upsertAgent(anAgent({ guardrails: { maxSteps: 10 } }));
+      await store.setAgentOverride({
+        agentId: 'agent-a',
+        guardrails: { maxSteps: 2 },
+        updatedAt: 1,
+        updatedBy: 'user-1',
+      });
+      // Simulates a redeploy.
+      await store.upsertAgent(anAgent({ guardrails: { maxSteps: 12 } }));
+      expect((await store.getAgentOverride('agent-a'))?.guardrails).toEqual({ maxSteps: 2 });
+    });
+
     // --- runtime state ------------------------------------------------------
 
     it('synthesises a default state for an unregistered agent', async () => {
