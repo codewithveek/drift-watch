@@ -1,22 +1,32 @@
 import { NavLink, Outlet, useLoaderData, type LoaderFunctionArgs } from 'react-router';
-import { client, type AgentDefinition, type StateResponse } from '@/api';
+import {
+  client,
+  type AgentDefinition,
+  type AgentOverride,
+  type OverridableField,
+  type StateResponse,
+} from '@/api';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { StatusDot, STATUS_LABEL } from '@/components/domain';
 
 export interface AgentLoaderData {
   agentId: string;
+  /** What the agent's own code declared. */
   definition: AgentDefinition;
+  /** What an operator changed in the console, layered over the above. */
+  override: AgentOverride | null;
+  overriddenFields: OverridableField[];
   state: StateResponse;
 }
 
 export async function agentLoader({ params }: LoaderFunctionArgs): Promise<AgentLoaderData> {
   const agentId = params.agentId!;
-  const [{ agent: definition }, state] = await Promise.all([
+  const [{ agent: definition, override, overriddenFields }, state] = await Promise.all([
     client.getAgent(agentId),
     client.getState(agentId),
   ]);
-  return { agentId, definition, state };
+  return { agentId, definition, override, overriddenFields, state };
 }
 
 const TABS = [

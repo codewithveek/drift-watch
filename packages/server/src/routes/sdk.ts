@@ -39,7 +39,9 @@ import {
   resolveAgentConfig,
   resolveToolCallPolicies,
 } from '@driftwatch/sdk';
+import type { SyncedToolMetadata } from '@driftwatch/sdk';
 import type { ServerConfig } from '../config/server-config.js';
+import { saveAgentTools } from '../state/agent-tools.js';
 import type { AuthorizeFn } from './auth.js';
 import type { AuditRecorder } from './audit.js';
 
@@ -77,6 +79,8 @@ interface SyncBody {
   toolPolicies?: ToolCallPolicyRule[];
   /** Names of the tools this client declares. Also the allow-list. */
   toolNames?: string[];
+  /** Descriptions + field paths, so the console can author field-scoped rules. */
+  tools?: SyncedToolMetadata[];
   driftDetectionEnabled?: boolean;
   sdkVersion?: string;
 }
@@ -134,6 +138,10 @@ export async function registerSdkRoutes(
           : {}),
       };
       await store.upsertAgent(baseline);
+      // Tool descriptions are stored separately from the agent record: they are
+      // reference data for the console's policy editor, not configuration, and
+      // nothing about enforcement reads them.
+      if (body.tools) await saveAgentTools(store, agentId, body.tools);
 
       // Only audit a genuine registration or an actual change. A client
       // re-syncing every 60s would otherwise bury the audit log under

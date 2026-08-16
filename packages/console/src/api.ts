@@ -21,6 +21,7 @@ import type {
   ActionLogEntry,
   AgentConfig,
   AgentDefinition,
+  AgentOverride,
   AgentRuntimeState,
   AgentStatus,
   ApiKeyScope,
@@ -39,6 +40,7 @@ export type {
   ActionLogEntry,
   AgentConfig,
   AgentDefinition,
+  AgentOverride,
   AgentRuntimeState,
   AgentStatus,
   ApiKeyScope,
@@ -52,6 +54,15 @@ export type {
   ToolCallApproval,
   ToolCallPolicyRule,
 };
+
+/** GET /agents/:agentId */
+export interface AgentDetailResponse {
+  /** The code-declared baseline. */
+  agent: AgentDefinition;
+  /** Console-authored overrides, or null when the agent runs its own config. */
+  override: AgentOverride | null;
+  overriddenFields: OverridableField[];
+}
 
 /** GET /agents/:agentId/state */
 export interface StateResponse {
@@ -197,7 +208,12 @@ function del<T>(path: string): Promise<T> {
 export const client = {
   // --- fleet ---------------------------------------------------------------
   getAgents: () => api<{ agents: AgentDefinition[] }>('/agents'),
-  getAgent: (agentId: string) => api<{ agent: AgentDefinition }>(`/agents/${agentId}`),
+  /**
+   * Both layers, unresolved: `agent` is what the agent's code declared,
+   * `override` is what an operator changed here. The Config form edits the
+   * override and shows the declaration underneath.
+   */
+  getAgent: (agentId: string) => api<AgentDetailResponse>(`/agents/${agentId}`),
   registerAgent: (body: Partial<AgentDefinition> & { name: string }) =>
     post<{ agent: AgentDefinition }>('/agents', body),
   updateAgent: (agentId: string, patch: Partial<AgentDefinition>) =>
@@ -205,7 +221,14 @@ export const client = {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
+  /** This server's in-process tool registry. Fleet-wide, not per agent. */
   getTools: () => api<{ tools: ToolMetadata[] }>('/tools'),
+  /**
+   * The tools ONE agent can call. For an SDK-registered agent these were
+   * declared by its own code and this server has never seen them, so the
+   * fleet-wide registry above would show entirely the wrong set.
+   */
+  getAgentTools: (agentId: string) => api<{ tools: ToolMetadata[] }>(`/agents/${agentId}/tools`),
   /** Drops every console override so the agent falls back to what its code declares. */
   revertAgentOverride: (agentId: string) =>
     del<{ cleared: boolean; agent: AgentDefinition }>(`/agents/${agentId}/override`),

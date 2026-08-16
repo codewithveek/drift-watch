@@ -32,6 +32,7 @@ import type { AgentConfig } from '../config/schema.js';
 import type { ToolCallPolicyRule } from '../autopilot/tool-call-policy.js';
 import type { AgentDefinition, ToolCallApproval } from '../autopilot/types.js';
 import type { ToolCallApprovalTransport } from '../autopilot/tool-call-gate.js';
+import type { SyncedToolMetadata } from './tool-metadata.js';
 
 /** The configuration a control plane reports as actually in force. */
 export interface EffectiveAgentConfig {
@@ -54,6 +55,12 @@ export interface AgentDeclaration {
   guardrails?: Partial<AgentConfig>;
   toolPolicies?: ToolCallPolicyRule[];
   toolNames?: string[];
+  /**
+   * Full descriptions of the declared tools, including the field paths a policy
+   * may target. This is what lets the console offer field-scoped policy
+   * authoring for tools it has never seen.
+   */
+  tools?: SyncedToolMetadata[];
   driftDetectionEnabled?: boolean;
   sdkVersion?: string;
 }

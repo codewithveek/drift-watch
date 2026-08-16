@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams, useRevalidator, useRouteLoaderData } from 'react-router';
-import { Save } from 'lucide-react';
+import { RotateCcw, Save } from 'lucide-react';
 import { client, type AgentConfig, type ToolCallPolicyRule, type ToolMetadata } from '@/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,8 +15,15 @@ export interface ConfigLoaderData {
   allTools: ToolMetadata[];
 }
 
-export async function configLoader(): Promise<ConfigLoaderData> {
-  const { tools } = await client.getTools();
+export async function configLoader({
+  params,
+}: {
+  params: { agentId?: string };
+}): Promise<ConfigLoaderData> {
+  // Per-agent, not fleet-wide: an SDK-registered agent declares its own tools,
+  // and offering this server's demo registry instead would let an operator
+  // author rules for tools the agent cannot call while hiding the ones it can.
+  const { tools } = await client.getAgentTools(params.agentId!);
   return { allTools: tools };
 }
 
@@ -31,22 +38,30 @@ const NUMERIC_GUARDRAILS: { key: keyof AgentConfig; label: string; hint: string 
 
 export function AgentConfigPage() {
   const { agentId } = useParams();
-  const { definition, state } = useRouteLoaderData('agent') as AgentLoaderData;
+  const { definition, override, overriddenFields, state } = useRouteLoaderData(
+    'agent',
+  ) as AgentLoaderData;
   const { allTools } = useRouteLoaderData('agent-config') as ConfigLoaderData;
   const revalidator = useRevalidator();
 
   // Initialized once from loader data — deliberately NOT synced via useEffect,
   // which would clobber whatever the operator is typing on the next poll.
+  /*
+   * Seeded from the OVERRIDE where one exists, falling back to what the code
+   * declared. This form edits the override layer — seeding it from the resolved
+   * view instead would bake deployment defaults and inherited values in as
+   * explicit local overrides the moment anyone pressed Save.
+   */
   const [guardrails, setGuardrails] = useState<Partial<AgentConfig>>(
-    () => definition.guardrails ?? {},
+    () => override?.guardrails ?? definition.guardrails ?? {},
   );
   const [toolNames, setToolNames] = useState<string[]>(
-    () => definition.toolNames ?? allTools.map((tool) => tool.name),
+    () => override?.toolNames ?? definition.toolNames ?? allTools.map((tool) => tool.name),
   );
   // The agent's OWN rules, not the resolved set — editing must not silently
   // absorb rules inherited via toolPoliciesSource and bake them in as local.
   const [policies, setPolicies] = useState<ToolCallPolicyRule[]>(
-    () => definition.toolPolicies ?? [],
+    () => override?.toolPolicies ?? definition.toolPolicies ?? [],
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +75,26 @@ export function AgentConfigPage() {
   function touch() {
     setSaved(false);
     setDirty(true);
+  }
+
+  const [reverting, setReverting] = useState(false);
+
+  /**
+   * Drops every console override so the agent falls back to its own declared
+   * config. A full reload rather than a revalidate: the form's state was seeded
+   * from the override that no longer exists, and re-seeding it correctly means
+   * re-entering through the loader.
+   */
+  async function revert() {
+    setReverting(true);
+    setError(null);
+    try {
+      await client.revertAgentOverride(agentId!);
+      window.location.reload();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Failed to revert');
+      setReverting(false);
+    }
   }
 
   async function save() {
@@ -80,6 +115,22 @@ export function AgentConfigPage() {
 
   return (
     <div className="space-y-4 pb-20">
+      {overriddenFields.length > 0 && (
+        <Notice tone="warn">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>
+              This agent is running with console overrides on{' '}
+              <strong className="font-medium">{overriddenFields.join(', ')}</strong>. Its own code
+              declares different values — a redeploy will not change what is in force here.
+            </span>
+            <Button size="sm" variant="outline" onClick={revert} disabled={reverting}>
+              <RotateCcw className="size-3.5" />
+              {reverting ? 'Reverting…' : 'Revert to code'}
+            </Button>
+          </div>
+        </Notice>
+      )}
+
       {error && <Notice tone="error">{error}</Notice>}
       {saved && !error && (
         <Notice tone="success">
@@ -135,7 +186,7 @@ export function AgentConfigPage() {
         <CardHeader>
           <CardTitle className="text-base">Tools</CardTitle>
           <CardDescription>
-            Which of the server's registered tools this agent may call.{' '}
+            The tools this agent declares.{' '}
             <span className="tabular-nums">{toolNames.length}</span> of{' '}
             <span className="tabular-nums">{allTools.length}</span> enabled.
           </CardDescription>

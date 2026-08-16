@@ -43,6 +43,7 @@ import { visibleToPrincipal, type AuthorizeFn } from './auth.js';
 import { describeChangedFields, touchesPolicy, type AuditRecorder } from './audit.js';
 import { allToolMetadata, allToolNames } from '../tools.js';
 import { listEffectiveAgents } from '../state/effective-agent.js';
+import { listAgentTools } from '../state/agent-tools.js';
 
 const HISTORY_LIMIT = 100;
 const AUDIT_LIMIT = 200;
@@ -266,11 +267,25 @@ export async function registerConsoleRoutes(
     if (!principal) return;
     const agent = await requireAgent(store, request.params.agentId, reply);
     if (!agent) return;
-    // Raw, unresolved definition — for populating an edit form. /state below
-    // returns the *resolved* (merged) view for display, which you don't want
-    // to PATCH back (it would bake an inherited guardrailsSource in as a
-    // hard override).
-    return { agent };
+    /*
+     * Returns BOTH layers, unresolved.
+     *
+     * `agent` is what the agent's own code declared; `override` is what an
+     * operator changed in the console. An edit form needs both: it edits the
+     * override, but it must show the declared value underneath so the operator
+     * can see what they are diverging from — and so "revert" means something
+     * concrete rather than "restore some earlier state".
+     *
+     * /state returns the fully RESOLVED view for display. That is deliberately
+     * not what an edit form should PATCH back: doing so would bake deployment
+     * defaults and inherited values in as explicit local overrides.
+     */
+    const override = await store.getAgentOverride(agent.id);
+    return {
+      agent,
+      override: override ?? null,
+      overriddenFields: overriddenFields(override),
+    };
   });
 
   fastifyServer.patch<{ Params: { agentId: string }; Body: AgentWriteBody }>(
@@ -449,6 +464,38 @@ export async function registerConsoleRoutes(
       // `cleared: false` (nothing was overridden) is a successful no-op, not a
       // 404 — the caller's intent is satisfied either way.
       return { cleared, agent };
+    },
+  );
+
+  /**
+   * The tools THIS agent can call, with the field paths a policy may target.
+   *
+   * Distinct from the fleet-wide GET /tools, which lists this server's own
+   * in-process registry. An SDK-registered agent declares its own tools, and
+   * showing it the server's demo registry instead — which is what the console
+   * did before this route existed — meant the policy editor offered rules for
+   * tools the agent does not have while hiding the ones it does.
+   */
+  fastifyServer.get<{ Params: { agentId: string } }>(
+    '/agents/:agentId/tools',
+    async (request, reply) => {
+      if (!(await authorize(request, reply, { scope: 'read', agentId: request.params.agentId })))
+        return;
+      const agent = await requireAgent(store, request.params.agentId, reply);
+      if (!agent) return;
+
+      const synced = await listAgentTools(store, agent.id);
+      if (synced) return { tools: synced };
+
+      // No synced tools: an in-process agent, or a backend that cannot store
+      // them. Fall back to this server's registry, narrowed to the agent's
+      // allow-list when it has one.
+      const allowed = agent.toolNames;
+      return {
+        tools: allowed
+          ? allToolMetadata.filter((tool) => allowed.includes(tool.name))
+          : allToolMetadata,
+      };
     },
   );
 

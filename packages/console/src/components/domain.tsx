@@ -261,27 +261,36 @@ export function Stat({ label, value, hint }: { label: string; value: ReactNode; 
   );
 }
 
+const NOTICE_TONES = {
+  error: 'bg-danger/15 text-danger-text',
+  success: 'bg-ok/15 text-ok-text',
+  /** A standing condition worth knowing about, not a failure — e.g. an agent
+   *  running under operator overrides rather than its own declared config. */
+  warn: 'bg-warn/15 text-warn-text',
+} as const;
+
 /**
- * Inline error/success notice. Shared so a failed action reads identically on
- * every screen — a "save failed" that looks different per page is one of the
- * fastest ways to make a tool feel unfinished.
+ * Inline notice. Shared so a failed action reads identically on every screen —
+ * a "save failed" that looks different per page is one of the fastest ways to
+ * make a tool feel unfinished.
+ *
+ * Only `error` gets role="alert": that interrupts a screen reader mid-sentence,
+ * which is right for something that just went wrong and wrong for a state that
+ * was already true when the page loaded.
  */
 export function Notice({
   tone,
   children,
 }: {
-  tone: 'error' | 'success';
+  tone: keyof typeof NOTICE_TONES;
   children: ReactNode;
 }) {
   return (
-    <p
+    <div
       role={tone === 'error' ? 'alert' : 'status'}
-      className={cn(
-        'rounded-lg px-3 py-2 text-sm',
-        tone === 'error' ? 'bg-danger/15 text-danger-text' : 'bg-ok/15 text-ok-text',
-      )}
+      className={cn('rounded-lg px-3 py-2 text-sm', NOTICE_TONES[tone])}
     >
       {children}
-    </p>
+    </div>
   );
 }

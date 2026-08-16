@@ -34,6 +34,11 @@ export {
   type RunAgentOptions,
 } from './agent/driftwatch-agent.js';
 export {
+  describeTools,
+  extractFieldPaths,
+  type SyncedToolMetadata,
+} from './agent/tool-metadata.js';
+export {
   ControlPlaneClient,
   ControlPlaneError,
   type ControlPlaneClientOptions,

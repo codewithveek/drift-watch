@@ -426,7 +426,9 @@ describe('response envelope shapes (pinned for packages/console/src/api.ts)', ()
     const at = async (url: string) => Object.keys((await fastify.inject({ method: 'GET', url })).json());
     expect(await at('/agents')).toEqual(['agents']);
     expect(await at('/tools')).toEqual(['tools']);
-    expect(await at('/agents/agent-1')).toEqual(['agent']);
+    // Both layers plus the derived marker list — the Config form edits the
+    // override and shows the declaration underneath, so it needs all three.
+    expect(await at('/agents/agent-1')).toEqual(['agent', 'override', 'overriddenFields']);
     expect(await at('/agents/agent-1/approvals')).toEqual(['approvals']);
     expect(await at('/agents/agent-1/drift/history')).toEqual(['history']);
     expect(await at('/agents/agent-1/actions/log')).toEqual(['log']);

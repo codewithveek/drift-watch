@@ -77,6 +77,16 @@ export class PostgresStateStore implements StateStore {
   private readonly organizationId: string;
   private readonly onClose: (() => Promise<void>) | undefined;
 
+  /**
+   * The drizzle handle, for the one feature that is genuinely Postgres-only:
+   * per-agent tool descriptions (see ../state/agent-tools.ts). Exposed rather
+   * than widening `StateStore`, which every custom backend must implement, for a
+   * console display concern that no enforcement path reads.
+   */
+  get database(): Database {
+    return this.db;
+  }
+
   constructor(options: PostgresStateStoreOptions) {
     this.db = options.db;
     this.organizationId = options.organizationId ?? DEFAULT_ORGANIZATION_ID;
