@@ -55,7 +55,7 @@ async function buildApp(
     driftWatchConfig: DriftWatchConfigSchema.parse({}),
     approvalService,
     scheduler: options.scheduler ?? buildStubScheduler(),
-    authorize: createAuthGate({ store, authToken: config.authToken }),
+    authorize: createAuthGate({ store }),
     recordAudit: createAuditRecorder(store),
   });
   await fastify.ready();

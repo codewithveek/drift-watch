@@ -9,23 +9,39 @@ Every route goes through one gate, `createAuthGate` in
 [`routes/auth.ts`](https://github.com/codewithveek/drift-watch/blob/main/packages/server/src/routes/auth.ts),
 which resolves the caller to one of three principals:
 
-- **`root`** — the flat `AUTH_TOKEN`, sent as `Authorization: Bearer <token>`.
-  Holds every scope over every agent. The comparison uses
-  `crypto.timingSafeEqual` (after an equal-length fast-path check) rather than
-  `===`, so response timing can't be used to recover the token byte by byte.
-  This is the bootstrap credential: it is how the first API key gets minted,
-  and how you recover if the key store is empty.
-- **`api-key`** — a scoped key minted from the console or `POST /api-keys`
-  (see [API keys](#api-keys) below). Works whether or not `AUTH_TOKEN` is set.
-- **`local`** — with `AUTH_TOKEN` unset *and no credential presented*, the
-  server trusts RFC 1918 private ranges (`10.0.0.0/8`, `172.16.0.0/12`,
-  `192.168.0.0/16`, plus loopback) and refuses everything else. Model calls
-  cost real money, so this prevents accidental anonymous access in production.
+- **`user`** — a signed-in human, identified by a session cookie. This is how
+  the console authenticates. Permissions come from the user's role, which is a
+  named bundle of the *same* scopes an API key carries, so every route is
+  written once and applies to both.
+- **`api-key`** — a scoped key minted from the console or `POST /api/v1/api-keys`
+  (see [API keys](#api-keys) below). This is how the SDK and CI authenticate.
+- **`local`** — a development affordance, available **only when the deployment
+  has no database** and therefore no login at all. The server then trusts RFC
+  1918 private ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, plus
+  loopback) and refuses everything else, so `pnpm dev` needs no setup.
 
-Presenting a bearer that matches neither `AUTH_TOKEN` nor a live key is a
-**401 even from the local network** — a bad credential is never silently
-downgraded to local trust, because that would make a stale token look like it
-was working while actually being ignored.
+<Callout type="warn" title="AUTH_TOKEN was removed">
+  Earlier versions had a fourth principal: a flat `AUTH_TOKEN` bearer holding
+  every scope over every agent, forever, with no expiry and no revocation. It is
+  **gone**, not deprecated — a break-glass credential that exists is one that
+  gets used, and every action it took was attributed to `root` rather than to a
+  person, which is precisely what an audit log exists to prevent.
+
+  Each of its jobs has a replacement: operators **sign in**; machines use
+  **scoped API keys**; bootstrapping is `DW_USER`/`DW_PASSWORD` seeding the first
+  admin at deploy time; and "recover when the key store is empty" was only ever a
+  problem for the in-memory store, which no production deployment should use.
+</Callout>
+
+The `local` path closes the moment a database is configured. Without that, a
+deployment with a login screen would still hand full fleet-wide admin scopes to
+any uncredentialed request from a private IP — which is not a theoretical range:
+every container on the same Docker network has one, as does every request
+forwarded by a proxy that doesn't set `X-Forwarded-For`.
+
+Presenting a bearer that matches no live key is a **401 even from the local
+network** — a bad credential is never silently downgraded to local trust, because
+that would make a stale token look like it was working while being ignored.
 
 `request.ip` is what the local-network path keys on, which means
 **`TRUST_PROXY` must be set correctly** — if the server sits behind a reverse
@@ -39,10 +55,13 @@ nothing else, for load balancer / orchestrator health checks.
 
 ## API keys
 
-`AUTH_TOKEN` is all-or-nothing. API keys are the scoped alternative: mint one
-per consumer with only the permissions it needs, and revoke it independently.
-Manage them at **`/console/settings/api-keys`**, or over HTTP with
-`GET/POST /api-keys` and `DELETE /api-keys/:id`.
+API keys authenticate **machines** — the SDK, CI, scripts. Mint one per consumer
+with only the scopes and agents it needs, and revoke it independently. Manage
+them at **`/settings/api-keys`**, or over HTTP with
+`GET/POST /api/v1/api-keys` and `DELETE /api/v1/api-keys/:id`.
+
+You do not need one to use the console: you are signed in as a person, and your
+actions are attributed to you by name in the audit log.
 
 ### Scopes
 
@@ -204,7 +223,7 @@ off in-flight `/run` calls or drop the final export.
 - **Durable key storage.** API keys live in the `StateStore`. With `REDIS_URL`
   set they survive restarts; with the default in-memory store they do **not** —
   a restart empties the key list and every minted token stops working. That is
-  fine for local development (and `AUTH_TOKEN` still gets you back in), but a
+  fine for local development, but a
   deployment issuing real keys wants Redis.
 - **Redis exposure.** When `REDIS_URL` is set it holds pending approvals, the
   agent state, the leader lock, and API key hashes — put it on a private

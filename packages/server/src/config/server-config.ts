@@ -9,19 +9,11 @@ import { AGENT_ID_PATTERN } from '@driftwatch/sdk';
  */
 
 export const ServerConfigSchema = z.object({
-  port: z.coerce.number().int().positive().default(3000),
+  port: z.coerce.number().int().positive().default(4300),
   host: z.string().default('0.0.0.0'),
   logLevel: z.string().default('info'),
   bodyLimitBytes: z.coerce.number().int().positive().default(128 * 1024),
   trustProxy: z.boolean().default(false),
-  /**
-   * DEPRECATED break-glass credential. Human operators now log in with a
-   * username and password (see auth/auth.ts); this remains only so a deployment
-   * that has not yet created its admin, or one whose key store was lost on
-   * restart, is still reachable. Leave it unset once an admin exists.
-   */
-  authToken: z.string().default(''),
-
   // --- built-in auth --------------------------------------------------------
   /** Email/username of the admin created on first boot, when no such user exists. */
   adminUser: z.string().default(''),
@@ -135,7 +127,6 @@ export function loadServerConfigFromEnv(
     logLevel: env.LOG_LEVEL,
     bodyLimitBytes: env.BODY_LIMIT,
     trustProxy: env.TRUST_PROXY === '1',
-    authToken: env.AUTH_TOKEN,
     adminUser: env.DW_USER,
     adminPassword: env.DW_PASSWORD,
     authSecret: env.DW_AUTH_SECRET || env.BETTER_AUTH_SECRET,

@@ -14,7 +14,7 @@ the runtime image doesn't need the monorepo):
 
 ```bash
 docker build -f packages/server/Dockerfile -t driftwatch .
-docker run --rm -p 3000:3000 --env-file packages/server/.env driftwatch
+docker run --rm -p 4300:4300 --env-file packages/server/.env driftwatch
 ```
 
 The image is production-ready by default:
@@ -22,7 +22,7 @@ The image is production-ready by default:
 - Multi-stage build — the build toolchain does not contain the runtime image.
 - Runs as a non-root user.
 - `HEALTHCHECK` polls `/health` every 30s.
-- Bundles the console (served at `/console/`).
+- Bundles the console (served at the root (`/`)).
 - Starts telemetry before the app loads, so instrumentation catches everything.
 
 Publish it to any registry and run it anywhere that runs containers (ECS, Cloud
@@ -46,7 +46,8 @@ docker compose up -d --build
 
 It wires `REDIS_URL` into the container so Autopilot state is shared and
 multi-process-safe from the start. Set your secrets (`QWEN_API_KEY`,
-`AUTH_TOKEN`, and any telemetry/channel vars) as environment variables — the
+`DW_USER`, `DW_PASSWORD`, `DW_AUTH_SECRET`, `DATABASE_URL`, and any
+telemetry/channel vars) as environment variables — the
 compose file substitutes them at deploy time; on a PaaS, set them in that
 platform's environment UI.
 
@@ -96,7 +97,8 @@ network; use `rediss://` + auth if it leaves the host.
 
 ## Production checklist
 
-- **Set `AUTH_TOKEN`.** Without it the server only accepts private-network
+- **Set `DATABASE_URL`, `DW_USER`, `DW_PASSWORD` and `DW_AUTH_SECRET`.** Without
+  a database there is no login, and the server only accepts private-network
   traffic — fine for dev, not for a public ingress.
   ([security.md](/docs/security#authentication))
 - **Set `TRUST_PROXY=1`** behind a reverse proxy or load balancer, so client IP,

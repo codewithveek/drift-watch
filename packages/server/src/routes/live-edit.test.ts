@@ -69,7 +69,7 @@ describe('live edit: PATCH via console routes takes effect on the next /run', ()
       notifiers: { list: [] },
       toolCallApprovalTimeoutMs: 300,
       toolCallApprovalTimeoutDecision: 'rejected',
-      authorize: createAuthGate({ store, authToken: serverConfig.authToken }),
+      authorize: createAuthGate({ store }),
     });
     await registerConsoleRoutes(fastify, {
       store,
@@ -77,7 +77,7 @@ describe('live edit: PATCH via console routes takes effect on the next /run', ()
       driftWatchConfig,
       approvalService,
       scheduler: {} as AutopilotScheduler, // unused: this file never scans
-      authorize: createAuthGate({ store, authToken: serverConfig.authToken }),
+      authorize: createAuthGate({ store }),
       recordAudit: createAuditRecorder(store),
     });
     await fastify.ready();
@@ -132,7 +132,7 @@ describe('live edit: PATCH via console routes takes effect on the next /run', ()
       notifiers: { list: [] },
       toolCallApprovalTimeoutMs: 300,
       toolCallApprovalTimeoutDecision: 'rejected',
-      authorize: createAuthGate({ store, authToken: serverConfig.authToken }),
+      authorize: createAuthGate({ store }),
     });
     await registerConsoleRoutes(fastify, {
       store,
@@ -140,7 +140,7 @@ describe('live edit: PATCH via console routes takes effect on the next /run', ()
       driftWatchConfig,
       approvalService,
       scheduler: {} as AutopilotScheduler, // unused: this file never scans
-      authorize: createAuthGate({ store, authToken: serverConfig.authToken }),
+      authorize: createAuthGate({ store }),
       recordAudit: createAuditRecorder(store),
     });
     await fastify.ready();

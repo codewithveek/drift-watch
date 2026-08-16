@@ -15,11 +15,12 @@ let app: FastifyInstance | undefined;
  * rather than any particular business route's extra validation.
  */
 async function buildProbe(
-  authToken: string,
   requirements: Record<string, AuthRequirement>,
 ): Promise<{ fastify: FastifyInstance; store: StateStore }> {
   const store = new MemoryStateStore();
-  const authorize = createAuthGate({ store, authToken });
+  // No `auth`: these probes model a deployment with no database, which is the
+  // only configuration in which the local-network path is still open.
+  const authorize = createAuthGate({ store });
   const fastify = Fastify({ logger: false });
 
   for (const [path, requirement] of Object.entries(requirements)) {
@@ -50,34 +51,35 @@ afterEach(async () => {
 });
 
 describe('principal resolution', () => {
-  it('accepts AUTH_TOKEN as root with every scope', async () => {
-    const { fastify } = await buildProbe('secret', { admin: { scope: 'keys:admin' } });
-
-    const response = await fastify.inject({
+  it('trusts an unauthenticated local request when there is no login configured', async () => {
+    // The last remaining credential-free path, and it exists so `pnpm dev`
+    // needs no setup. It closes the moment a database (and therefore a login)
+    // is configured — see routes/auth.ts.
+    const { fastify } = await buildProbe({ read: { scope: 'read' } });
+    const local = await fastify.inject({
       method: 'GET',
-      url: '/admin',
-      headers: { authorization: 'Bearer secret' },
+      url: '/read',
+      remoteAddress: '127.0.0.1',
     });
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ principalId: 'root', kind: 'root' });
+    expect(local.statusCode).toBe(200);
+    expect(local.json()).toMatchObject({ kind: 'local' });
   });
 
-  it('trusts an unauthenticated local request only when AUTH_TOKEN is unset', async () => {
-    const withToken = await buildProbe('secret', { read: { scope: 'read' } });
-    expect((await withToken.fastify.inject({ method: 'GET', url: '/read' })).statusCode).toBe(401);
-    await withToken.fastify.close();
-
-    const withoutToken = await buildProbe('', { read: { scope: 'read' } });
-    const response = await withoutToken.fastify.inject({ method: 'GET', url: '/read' });
-    expect(response.statusCode).toBe(200);
-    expect(response.json().kind).toBe('local');
+  it('refuses a remote unauthenticated request', async () => {
+    const { fastify } = await buildProbe({ read: { scope: 'read' } });
+    const remote = await fastify.inject({
+      method: 'GET',
+      url: '/read',
+      remoteAddress: '203.0.113.5',
+    });
+    expect(remote.statusCode).toBe(401);
   });
 
-  it('401s a bearer that matches nothing, even from localhost with no AUTH_TOKEN', async () => {
+  it('401s a bearer that matches nothing, even from localhost', async () => {
     // Behaviour change from the old flat gate, and deliberate: silently
     // downgrading a bad credential to local trust makes a stale token in
     // localStorage look like it is working when it is being ignored.
-    const { fastify } = await buildProbe('', { read: { scope: 'read' } });
+    const { fastify } = await buildProbe({ read: { scope: 'read' } });
     const response = await fastify.inject({
       method: 'GET',
       url: '/read',
@@ -87,21 +89,21 @@ describe('principal resolution', () => {
   });
 
   it('authenticates a minted key and reports it as the principal', async () => {
-    const { fastify, store } = await buildProbe('secret', { read: { scope: 'read' } });
+    const { fastify, store } = await buildProbe({ read: { scope: 'read' } });
     const { record, headers } = await seedKey(store, ['read']);
 
     const response = await fastify.inject({ method: 'GET', url: '/read', headers });
     expect(response.json()).toEqual({ principalId: record.id, kind: 'api-key' });
   });
 
-  it('works with API keys even when AUTH_TOKEN is not configured', async () => {
-    const { fastify, store } = await buildProbe('', { read: { scope: 'read' } });
+  it('authenticates a minted key from a remote address', async () => {
+    const { fastify, store } = await buildProbe({ read: { scope: 'read' } });
     const { headers } = await seedKey(store, ['read']);
     expect((await fastify.inject({ method: 'GET', url: '/read', headers })).statusCode).toBe(200);
   });
 
   it('distinguishes revoked from expired from unknown', async () => {
-    const { fastify, store } = await buildProbe('secret', { read: { scope: 'read' } });
+    const { fastify, store } = await buildProbe({ read: { scope: 'read' } });
 
     const revoked = await seedKey(store, ['read']);
     await store.revokeApiKey(revoked.record.id, 'root');
@@ -130,7 +132,7 @@ describe('principal resolution', () => {
   });
 
   it('records last-used coarsely rather than on every request', async () => {
-    const { fastify, store } = await buildProbe('secret', { read: { scope: 'read' } });
+    const { fastify, store } = await buildProbe({ read: { scope: 'read' } });
     const { record, headers } = await seedKey(store, ['read']);
 
     await fastify.inject({ method: 'GET', url: '/read', headers });
@@ -145,7 +147,7 @@ describe('principal resolution', () => {
 
 describe('scope enforcement', () => {
   it('403s a missing scope and names it', async () => {
-    const { fastify, store } = await buildProbe('secret', { write: { scope: 'policy:write' } });
+    const { fastify, store } = await buildProbe({ write: { scope: 'policy:write' } });
     const { headers } = await seedKey(store, ['read']);
 
     const response = await fastify.inject({ method: 'GET', url: '/write', headers });
@@ -154,7 +156,7 @@ describe('scope enforcement', () => {
   });
 
   it('requires ALL scopes when a route declares several', async () => {
-    const { fastify, store } = await buildProbe('secret', {
+    const { fastify, store } = await buildProbe({
       both: { scope: ['agents:write', 'policy:write'] },
     });
 
@@ -172,7 +174,7 @@ describe('scope enforcement', () => {
 
 describe('agent scoping', () => {
   it('allows the agents a key holds and 403s the ones it does not', async () => {
-    const { fastify, store } = await buildProbe('secret', {
+    const { fastify, store } = await buildProbe({
       one: { scope: 'read', agentId: 'agent-1' },
       two: { scope: 'read', agentId: 'agent-2' },
     });
@@ -186,7 +188,7 @@ describe('agent scoping', () => {
   });
 
   it('lets a fleet-wide key reach any agent', async () => {
-    const { fastify, store } = await buildProbe('secret', {
+    const { fastify, store } = await buildProbe({
       any: { scope: 'read', agentId: 'whatever' },
     });
     const { headers } = await seedKey(store, ['read']);
@@ -194,7 +196,7 @@ describe('agent scoping', () => {
   });
 
   it('refuses fleet-wide operations from an agent-scoped key', async () => {
-    const { fastify, store } = await buildProbe('secret', {
+    const { fastify, store } = await buildProbe({
       fleet: { scope: 'control:write', fleetWide: true },
     });
 

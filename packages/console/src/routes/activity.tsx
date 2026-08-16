@@ -102,7 +102,7 @@ export function ActivityPage() {
         emptyState={
           <EmptyState icon={<FileClock className="size-5" />} title="Nothing recorded yet">
             Every control-plane change is appended here with the principal behind it: the root
-            AUTH_TOKEN, a named API key, or a local dev request.
+            a signed-in user, a named API key, or a local dev request.
           </EmptyState>
         }
       />

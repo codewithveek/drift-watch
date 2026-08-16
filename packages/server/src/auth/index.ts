@@ -31,7 +31,8 @@ export async function setupAuth(options: SetupAuthOptions): Promise<Auth | undef
 
   if (!db) {
     logger?.warn(
-      'no DATABASE_URL: console login is disabled and AUTH_TOKEN is the only credential',
+      'no DATABASE_URL: console login is disabled. Only API keys and local-network ' +
+        'requests are accepted — set DATABASE_URL for a real deployment.',
     );
     return undefined;
   }

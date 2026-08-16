@@ -48,7 +48,7 @@ async function buildApp() {
       start() {},
       stop() {},
     } as unknown as AutopilotScheduler,
-    authorize: createAuthGate({ store, authToken: config.authToken }),
+    authorize: createAuthGate({ store }),
     recordAudit: createAuditRecorder(store),
   });
   await fastify.ready();

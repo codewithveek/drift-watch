@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import rateLimit from '@fastify/rate-limit';
-import { DriftWatchConfigSchema, MemoryStateStore, type ModelClient } from '@driftwatch/sdk';
+import {
+  DriftWatchConfigSchema,
+  MemoryStateStore,
+  mintApiKey,
+  type ModelClient,
+} from '@driftwatch/sdk';
 import { registerRoutes } from './agent.js';
 import { createAuthGate } from './auth.js';
 import type { ServerConfig } from '../config/server-config.js';
@@ -53,12 +58,11 @@ const fakeDriftReport = {
 
 function buildServerConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
   return {
-    port: 3000,
+    port: 4300,
     host: '0.0.0.0',
     logLevel: 'silent',
     bodyLimitBytes: 131072,
     trustProxy: false,
-    authToken: '',
     maxPromptBytes: 8192,
     driftDryRun: false,
     rateLimitMax: 100,
@@ -99,7 +103,9 @@ async function buildTestServer(
     notifiers: { list: [] },
     toolCallApprovalTimeoutMs: 300,
     toolCallApprovalTimeoutDecision: 'rejected',
-    authorize: createAuthGate({ store, authToken: serverConfig.authToken }),
+    // No `auth` (tests have no database), so loopback callers resolve to the
+    // `local` development principal and a bearer must be a real minted key.
+    authorize: createAuthGate({ store }),
   });
   await fastifyServer.ready();
   currentServer = fastifyServer;
@@ -126,8 +132,13 @@ describe('GET /health', () => {
 });
 
 describe('authorization gate (shared by /run and /drift)', () => {
-  it('rejects a remote client when AUTH_TOKEN is unset', async () => {
-    const server = await buildTestServer({ authToken: '' });
+  /*
+   * AUTH_TOKEN is gone. With no database there is no login either, so the only
+   * two ways through are a minted API key or the local-network development
+   * path. These tests pin exactly where that line falls.
+   */
+  it('rejects a remote client with no credential', async () => {
+    const server = await buildTestServer();
     const response = await server.inject({
       method: 'POST',
       url: '/run',
@@ -138,8 +149,8 @@ describe('authorization gate (shared by /run and /drift)', () => {
     expect(runAgentTaskMock).not.toHaveBeenCalled();
   });
 
-  it('allows loopback when AUTH_TOKEN is unset', async () => {
-    const server = await buildTestServer({ authToken: '' });
+  it('allows loopback when the deployment has no login configured', async () => {
+    const server = await buildTestServer();
     const response = await server.inject({
       method: 'POST',
       url: '/run',
@@ -149,8 +160,8 @@ describe('authorization gate (shared by /run and /drift)', () => {
     expect(response.statusCode).toBe(200);
   });
 
-  it('allows the RFC 1918 172.16.0.0/12 range when AUTH_TOKEN is unset', async () => {
-    const server = await buildTestServer({ authToken: '' });
+  it('allows the RFC 1918 172.16.0.0/12 range', async () => {
+    const server = await buildTestServer();
     const response = await server.inject({
       method: 'POST',
       url: '/run',
@@ -161,7 +172,7 @@ describe('authorization gate (shared by /run and /drift)', () => {
   });
 
   it('rejects 172.x addresses outside the private /12 range (regression: not just a "172." prefix match)', async () => {
-    const server = await buildTestServer({ authToken: '' });
+    const server = await buildTestServer();
     const response = await server.inject({
       method: 'POST',
       url: '/run',
@@ -171,47 +182,59 @@ describe('authorization gate (shared by /run and /drift)', () => {
     expect(response.statusCode).toBe(401);
   });
 
-  it('rejects a missing/wrong bearer token when AUTH_TOKEN is set', async () => {
-    const server = await buildTestServer({ authToken: 'correct-secret' });
-    const wrongToken = await server.inject({
+  it('rejects an unrecognised bearer EVEN from loopback', async () => {
+    const server = await buildTestServer();
+    const response = await server.inject({
       method: 'POST',
       url: '/run',
-      remoteAddress: '203.0.113.5',
-      headers: { authorization: 'Bearer wrong-secret' },
+      remoteAddress: '127.0.0.1',
+      headers: { authorization: 'Bearer not-a-real-key' },
       payload: { prompt: 'hi' },
     });
-    expect(wrongToken.statusCode).toBe(401);
-
-    const noHeader = await server.inject({
-      method: 'POST',
-      url: '/run',
-      remoteAddress: '203.0.113.5',
-      payload: { prompt: 'hi' },
-    });
-    expect(noHeader.statusCode).toBe(401);
+    // Downgrading a bad credential to local trust would make a stale token look
+    // like it was working while actually being ignored.
+    expect(response.statusCode).toBe(401);
     expect(runAgentTaskMock).not.toHaveBeenCalled();
   });
 
-  it('accepts a correct bearer token from a non-local address', async () => {
-    const server = await buildTestServer({ authToken: 'correct-secret' });
+  it('accepts a minted API key from a remote address', async () => {
+    const server = await buildTestServer();
+    const minted = mintApiKey({ name: 'ci', scopes: ['agent:run'], createdBy: 'test' });
+    await currentStore!.createApiKey(minted.record);
+
     const response = await server.inject({
       method: 'POST',
       url: '/run',
       remoteAddress: '203.0.113.5',
-      headers: { authorization: 'Bearer correct-secret' },
+      headers: { authorization: `Bearer ${minted.token}` },
       payload: { prompt: 'hi' },
     });
     expect(response.statusCode).toBe(200);
+  });
+
+  it('rejects a revoked key', async () => {
+    const server = await buildTestServer();
+    const minted = mintApiKey({ name: 'ci', scopes: ['agent:run'], createdBy: 'test' });
+    await currentStore!.createApiKey(minted.record);
+    await currentStore!.revokeApiKey(minted.record.id, 'test');
+
+    const response = await server.inject({
+      method: 'POST',
+      url: '/run',
+      remoteAddress: '203.0.113.5',
+      headers: { authorization: `Bearer ${minted.token}` },
+      payload: { prompt: 'hi' },
+    });
+    expect(response.statusCode).toBe(401);
   });
 });
 
 describe('POST /run', () => {
   it('rejects a missing prompt with 400', async () => {
-    const server = await buildTestServer({ authToken: 'secret' });
+    const server = await buildTestServer();
     const response = await server.inject({
       method: 'POST',
       url: '/run',
-      headers: { authorization: 'Bearer secret' },
       payload: {},
     });
     expect(response.statusCode).toBe(400);
@@ -219,11 +242,10 @@ describe('POST /run', () => {
   });
 
   it('rejects a prompt over maxPromptBytes with 413', async () => {
-    const server = await buildTestServer({ authToken: 'secret', maxPromptBytes: 8 });
+    const server = await buildTestServer({ maxPromptBytes: 8 });
     const response = await server.inject({
       method: 'POST',
       url: '/run',
-      headers: { authorization: 'Bearer secret' },
       payload: { prompt: 'way more than eight bytes' },
     });
     expect(response.statusCode).toBe(413);
@@ -231,11 +253,10 @@ describe('POST /run', () => {
   });
 
   it('returns the agent task result on success', async () => {
-    const server = await buildTestServer({ authToken: 'secret' });
+    const server = await buildTestServer();
     const response = await server.inject({
       method: 'POST',
       url: '/run',
-      headers: { authorization: 'Bearer secret' },
       payload: { prompt: 'weather in Lagos' },
     });
     expect(response.statusCode).toBe(200);
@@ -247,11 +268,10 @@ describe('POST /run', () => {
 
   it('returns 500 when the agent task throws', async () => {
     runAgentTaskMock.mockRejectedValueOnce(new Error('model unavailable'));
-    const server = await buildTestServer({ authToken: 'secret' });
+    const server = await buildTestServer();
     const response = await server.inject({
       method: 'POST',
       url: '/run',
-      headers: { authorization: 'Bearer secret' },
       payload: { prompt: 'hi' },
     });
     expect(response.statusCode).toBe(500);
@@ -261,18 +281,23 @@ describe('POST /run', () => {
 
 describe('GET /drift', () => {
   it('rejects an unauthorized request', async () => {
-    const server = await buildTestServer({ authToken: 'secret' });
-    const response = await server.inject({ method: 'GET', url: '/drift' });
+    const server = await buildTestServer();
+    // Remote, because loopback resolves to the `local` development principal
+    // when no login is configured — which is exactly what these tests run as.
+    const response = await server.inject({
+      method: 'GET',
+      url: '/drift',
+      remoteAddress: '203.0.113.5',
+    });
     expect(response.statusCode).toBe(401);
     expect(detectBehavioralDriftMock).not.toHaveBeenCalled();
   });
 
   it('returns the drift report on success', async () => {
-    const server = await buildTestServer({ authToken: 'secret' });
+    const server = await buildTestServer();
     const response = await server.inject({
       method: 'GET',
       url: '/drift',
-      headers: { authorization: 'Bearer secret' },
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual(fakeDriftReport);
@@ -282,14 +307,12 @@ describe('GET /drift', () => {
 describe('rate limiting', () => {
   it('returns 429 once a client exceeds rateLimitMax within the window', async () => {
     const server = await buildTestServer({
-      authToken: 'secret',
       rateLimitMax: 1,
       rateLimitWindowMs: 60_000,
     });
     const first = await server.inject({
       method: 'POST',
       url: '/run',
-      headers: { authorization: 'Bearer secret' },
       payload: { prompt: 'hi' },
     });
     expect(first.statusCode).toBe(200);
@@ -297,7 +320,6 @@ describe('rate limiting', () => {
     const second = await server.inject({
       method: 'POST',
       url: '/run',
-      headers: { authorization: 'Bearer secret' },
       payload: { prompt: 'hi' },
     });
     expect(second.statusCode).toBe(429);
@@ -307,7 +329,7 @@ describe('rate limiting', () => {
 describe('agent-scoped /run and /drift', () => {
   it('bare /run resolves to the auto-registered default agent (picks up its activeModel)', async () => {
     const switchedModel = 'switched-model-client' as unknown as ModelClient;
-    const server = await buildTestServer({ authToken: 'secret' }, { switched: switchedModel });
+    const server = await buildTestServer({}, { switched: switchedModel });
     await currentStore!.setAgentState('default', {
       status: 'running',
       activeModel: 'switched',
@@ -318,7 +340,6 @@ describe('agent-scoped /run and /drift', () => {
     const response = await server.inject({
       method: 'POST',
       url: '/run',
-      headers: { authorization: 'Bearer secret' },
       payload: { prompt: 'hi' },
     });
     expect(response.statusCode).toBe(200);
@@ -331,7 +352,7 @@ describe('agent-scoped /run and /drift', () => {
     const defaultModel = 'default-switched' as unknown as ModelClient;
     const otherModel = 'other-switched' as unknown as ModelClient;
     const server = await buildTestServer(
-      { authToken: 'secret' },
+      {},
       { 'default-model-id': defaultModel, 'other-model-id': otherModel },
     );
     await currentStore!.upsertAgent({ id: 'agent-2', name: 'Agent Two', createdAt: Date.now() });
@@ -351,7 +372,6 @@ describe('agent-scoped /run and /drift', () => {
     await server.inject({
       method: 'POST',
       url: '/agents/agent-2/run',
-      headers: { authorization: 'Bearer secret' },
       payload: { prompt: 'hi' },
     });
     expect(runAgentTaskMock).toHaveBeenLastCalledWith(
@@ -361,7 +381,6 @@ describe('agent-scoped /run and /drift', () => {
     await server.inject({
       method: 'POST',
       url: '/run',
-      headers: { authorization: 'Bearer secret' },
       payload: { prompt: 'hi' },
     });
     expect(runAgentTaskMock).toHaveBeenLastCalledWith(
@@ -370,12 +389,11 @@ describe('agent-scoped /run and /drift', () => {
   });
 
   it('both /agents/:agentId/drift and the bare /drift alias are reachable', async () => {
-    const server = await buildTestServer({ authToken: 'secret' });
+    const server = await buildTestServer();
 
     const scoped = await server.inject({
       method: 'GET',
       url: '/agents/default/drift',
-      headers: { authorization: 'Bearer secret' },
     });
     expect(scoped.statusCode).toBe(200);
     expect(scoped.json()).toEqual(fakeDriftReport);
@@ -383,17 +401,15 @@ describe('agent-scoped /run and /drift', () => {
     const bare = await server.inject({
       method: 'GET',
       url: '/drift',
-      headers: { authorization: 'Bearer secret' },
     });
     expect(bare.statusCode).toBe(200);
   });
 
   it('/agents/:agentId/run 404s for an unregistered agent (does not silently run with no scoping)', async () => {
-    const server = await buildTestServer({ authToken: 'secret' });
+    const server = await buildTestServer();
     const response = await server.inject({
       method: 'POST',
       url: '/agents/never-registered/run',
-      headers: { authorization: 'Bearer secret' },
       payload: { prompt: 'hi' },
     });
     expect(response.statusCode).toBe(404);
@@ -401,18 +417,17 @@ describe('agent-scoped /run and /drift', () => {
   });
 
   it('/agents/:agentId/drift 404s for an unregistered agent', async () => {
-    const server = await buildTestServer({ authToken: 'secret' });
+    const server = await buildTestServer();
     const response = await server.inject({
       method: 'GET',
       url: '/agents/never-registered/drift',
-      headers: { authorization: 'Bearer secret' },
     });
     expect(response.statusCode).toBe(404);
     expect(detectBehavioralDriftMock).not.toHaveBeenCalled();
   });
 
   it('resolves each agent\'s own tools/guardrails/agentId, not the global default, per request', async () => {
-    const server = await buildTestServer({ authToken: 'secret' });
+    const server = await buildTestServer();
     await currentStore!.upsertAgent({
       id: 'restricted-agent',
       name: 'Restricted Agent',
@@ -424,7 +439,6 @@ describe('agent-scoped /run and /drift', () => {
     await server.inject({
       method: 'POST',
       url: '/agents/restricted-agent/run',
-      headers: { authorization: 'Bearer secret' },
       payload: { prompt: 'hi' },
     });
 
@@ -437,7 +451,6 @@ describe('agent-scoped /run and /drift', () => {
     await server.inject({
       method: 'POST',
       url: '/run',
-      headers: { authorization: 'Bearer secret' },
       payload: { prompt: 'hi' },
     });
     const defaultCall = runAgentTaskMock.mock.calls.at(-1)![0];
@@ -447,7 +460,7 @@ describe('agent-scoped /run and /drift', () => {
   });
 
   it('a deny toolPolicies rule makes the built tool throw ToolCallDeniedError instead of executing (the model would see this as a tool error, not a 500)', async () => {
-    const server = await buildTestServer({ authToken: 'secret' });
+    const server = await buildTestServer();
     await currentStore!.upsertAgent({
       id: 'gated-agent',
       name: 'Gated Agent',
@@ -460,7 +473,6 @@ describe('agent-scoped /run and /drift', () => {
     await server.inject({
       method: 'POST',
       url: '/agents/gated-agent/run',
-      headers: { authorization: 'Bearer secret' },
       payload: { prompt: 'hi' },
     });
 
@@ -472,11 +484,10 @@ describe('agent-scoped /run and /drift', () => {
   });
 
   it('an agent with no toolPolicies configured gets tools with no policyGate at all (zero overhead, unchanged behavior)', async () => {
-    const server = await buildTestServer({ authToken: 'secret' });
+    const server = await buildTestServer();
     await server.inject({
       method: 'POST',
       url: '/run',
-      headers: { authorization: 'Bearer secret' },
       payload: { prompt: 'hi' },
     });
     const call = runAgentTaskMock.mock.calls.at(-1)![0];

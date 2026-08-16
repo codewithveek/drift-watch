@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
 // Served in production from the server at the ROOT (see server.ts
-// @fastify/static). In dev, server paths are proxied to Fastify on :3000 so the
+// @fastify/static). In dev, server paths are proxied to Fastify on :4300 so the
 // console runs on :5173 making the same same-origin fetches as in production.
 //
 // This list used to enumerate every resource (/agents, /audit, /tools, ...)
@@ -55,9 +55,9 @@ export default defineConfig({
       SERVER_PATHS.map((path) => [
         path,
         {
-          target: 'http://localhost:3000',
+          target: 'http://localhost:4300',
           // `changeOrigin: false` is required now that auth uses cookies.
-          // Rewriting the Host header to localhost:3000 makes better-auth set
+          // Rewriting the Host header to localhost:4300 makes better-auth set
           // the session cookie for that host, which the browser then refuses to
           // store against the :5173 origin — login appears to succeed and never
           // sticks. Keeping the original Host means the cookie matches.

@@ -14,7 +14,8 @@
  * A plain sha256 is deterministic, so the hash itself is the index: one
  * constant-time map/GET lookup, no scan. That is also why the "compare" is
  * a lookup miss rather than a byte comparison — there is no timing side
- * channel to leak, unlike the flat AUTH_TOKEN path.
+ * channel to leak. (The flat AUTH_TOKEN bearer this once contrasted with was
+ * removed in v2 — a single all-scope credential with no expiry or revocation.)
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 

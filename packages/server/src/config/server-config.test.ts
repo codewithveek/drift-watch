@@ -5,12 +5,11 @@ describe('ServerConfigSchema', () => {
   it('fills in sensible defaults when given an empty object', () => {
     const config = ServerConfigSchema.parse({});
     expect(config).toEqual({
-      port: 3000,
+      port: 4300,
       host: '0.0.0.0',
       logLevel: 'info',
       bodyLimitBytes: 131072,
       trustProxy: false,
-      authToken: '',
       adminUser: '',
       adminPassword: '',
       authSecret: '',

@@ -9,24 +9,28 @@ and a full audit log of every action Autopilot has taken. Use it to approve or
 reject a pause, watch a rollout in shadow mode, or find out why Autopilot
 throttled the agent overnight.
 
-It's a browser app served **by the server** at `/console/` — there's nothing
+It's a browser app served **by the server** at the root (`/`) — there's nothing
 separate to deploy. The Docker image builds and bundles it automatically.
 
 ## Opening it
 
-1. Browse to `http://<your-host>:3000/console/`.
-2. Click **Connect** and paste your `AUTH_TOKEN` (the same bearer token the
-   control-plane API uses). It's stored in your browser's `localStorage`, so it
-   survives refreshes — no login screen, no separate accounts.
+1. Browse to `http://<your-host>:4300/`.
+2. Sign in with the administrator account created from `DW_USER` / `DW_PASSWORD`
+   on the deployment's first boot. You'll be asked to choose your own password
+   the first time.
 
-That's the whole setup. The console polls the control-plane API every few
-seconds with that token; if a panel says data is unavailable, the token is
+That's the whole setup. The session lives in an `httpOnly` cookie, so no script
+— including anything injected into the page — can read it, and every action you
+take is attributed to you by name in the audit log.
+
+The console polls the control-plane API every few
+seconds; if a panel says data is unavailable, your session is
 wrong or the server is unreachable.
 
 <Callout title="Local development">
   You can run the console's own dev server for hot reload —
   `pnpm --filter @driftwatch/console dev` — which proxies API calls to the
-  server on `:3000`. In production it's always the bundled `/console/`.
+  server on `:4300`. In production it's always the bundled `/`.
 </Callout>
 
 ## What each panel shows

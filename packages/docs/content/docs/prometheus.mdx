@@ -86,7 +86,7 @@ curl 'http://localhost:9090/api/v1/query?query=agent_tool_calls_total' | jq
 A non-empty `result` array means metrics are flowing end to end — OTLP export
 → collector → Prometheus scrape. From there:
 
-- **`curl localhost:3000/drift`** — the live (non-dry-run) drift detector reads
+- **`curl localhost:4300/drift`** — the live (non-dry-run) drift detector reads
   exactly this data; a real `currentWindowStats` object back means the whole
   pull path works.
 - **Prometheus's own UI** (`http://localhost:9090/graph`) — graph

@@ -3,8 +3,8 @@ title: Quickstart
 description: Get DriftWatch running with Docker and produce your first drift report.
 ---
 
-Get DriftWatch running and produce your first drift report. The fastest path
-is Docker — no build step, one container.
+Get DriftWatch running and produce your first drift report. The fastest path is
+Docker Compose — two containers, DriftWatch and Postgres, nothing else required.
 
 <Callout title="Building the code instead?">
   Adding tools, changing the model wiring, running tests? Skip to [Running from
@@ -21,15 +21,24 @@ git clone https://github.com/codewithveek/drift-watch.git && cd drift-watch
 cp packages/server/.env.example packages/server/.env
 ```
 
-DriftWatch needs one thing to do useful work: a model provider key. Everything
-else has a safe default. Open `packages/server/.env` and set:
+Open `packages/server/.env` and set three things:
 
 - `QWEN_API_KEY` — your model key. The default deployment targets **Qwen Cloud**
   (an OpenAI-compatible endpoint). To use Anthropic, OpenAI, Google, or a local
   model instead, see [server.md → Model client](/docs/server#the-model-client).
-- `AUTH_TOKEN` — a secret of your choosing. Clients must send it as
-  `Authorization: Bearer <token>`. Leave it empty only for local experiments —
-  see [security.md](/docs/security#authentication).
+- `DW_USER` / `DW_PASSWORD` — the administrator account, created on the **first**
+  boot against an empty database. Public sign-up is disabled, so without these
+  there is no way into the console. The password must be at least 12 characters,
+  and you will be asked to change it on first sign-in.
+- `DW_AUTH_SECRET` — signs session cookies. Generate one with
+  `openssl rand -base64 32`. It must stay stable: changing it signs everyone out.
+
+<Callout type="warn">
+  There is no `AUTH_TOKEN`. Earlier versions had a single bearer token holding
+  every permission over every agent, with no expiry and no revocation — it was
+  removed rather than deprecated. Operators sign in; machines use scoped
+  [API keys](/docs/security#api-keys) minted from the console.
+</Callout>
 
 To send telemetry now, also set `OTEL_EXPORTER_OTLP_ENDPOINT`,
 `OTEL_EXPORTER_OTLP_HEADERS`, `PROMETHEUS_URL`, and `PROMETHEUS_BEARER_TOKEN` — the
@@ -42,30 +51,44 @@ still try everything below via dry-run mode.
 From a clone of the repo (the build context is the repo root):
 
 ```bash
-docker build -f packages/server/Dockerfile -t driftwatch .
-docker run --rm -p 3000:3000 --env-file packages/server/.env driftwatch
+docker compose --env-file packages/server/.env up -d --build
 ```
 
-The image bundles the server **and** the operator console. When it's up:
+That starts DriftWatch and Postgres. The server migrates its own schema at boot
+and seeds the admin account, so there is no separate setup step. When it's up:
 
 ```bash
-curl localhost:3000/health          # → {"ok":true}
+curl localhost:4300/health          # → {"ok":true}
 ```
 
-For a full stack (DriftWatch + Redis for shared state) in one command, use the
-compose file — see [deployment.md](/docs/deployment#docker-compose-the-standard-path).
+Open [http://localhost:4300](http://localhost:4300) and sign in with the `DW_USER` / `DW_PASSWORD` you
+set. The image bundles the operator console, served at the root.
+
+<Callout>
+  Postgres is what makes API keys, the audit log, drift history and run charts
+  survive a restart. It also removes the need for Redis *and* Prometheus — see
+  [deployment.md](/docs/deployment).
+</Callout>
 
 ## 3. Drive traffic
 
 Send the agent a task. Each `/run` call executes a tool-use loop and returns
-exactly what happened — no tracing backend required to see the result:
+exactly what happened — no tracing backend required to see the result.
+
+First mint a key: in the console, **API keys → New key**, with the `agent:run`
+scope. Then:
 
 ```bash
-curl -XPOST localhost:3000/run \
-  -H "authorization: Bearer $AUTH_TOKEN" \
+curl -XPOST localhost:4300/api/v1/run \
+  -H "authorization: Bearer $DRIFTWATCH_API_KEY" \
   -H 'content-type: application/json' \
   -d '{"prompt":"weather in Lagos, then search docs for onboarding"}'
 ```
+
+<Callout>
+  Every DriftWatch API route lives under `/api/v1`. The console owns the root, so
+  `/agents` is a console *page* while `/api/v1/agents` is the resource.
+</Callout>
 
 ```json
 {
@@ -91,11 +114,11 @@ script deliberately shifts the tool-call mix partway through, so there's a real
 change to detect:
 
 ```bash
-# from a repo clone; BASE_URL defaults to localhost:3000
+# from a repo clone; BASE_URL defaults to localhost:4300
 pnpm seed 40
 ```
 
-If your server requires `AUTH_TOKEN`, put it in `packages/server/.env` — the
+Put a `DRIFTWATCH_API_KEY` in `packages/server/.env` — the
 seed script reads it from there, so the command above still needs no
 shell-specific env-var syntax.
 
@@ -106,7 +129,7 @@ agent's behavior, and asks the model to classify whether it has drifted enough
 to warrant a human alert:
 
 ```bash
-curl localhost:3000/drift -H "authorization: Bearer $AUTH_TOKEN"
+curl localhost:4300/api/v1/drift -H "authorization: Bearer $DRIFTWATCH_API_KEY"
 ```
 
 ```json
@@ -132,7 +155,7 @@ curl localhost:3000/drift -H "authorization: Bearer $AUTH_TOKEN"
   see the full detection + verdict path with zero infrastructure:
 
   ```bash
-  curl 'localhost:3000/drift' -H "authorization: Bearer $AUTH_TOKEN"   # with DRIFT_DRY_RUN=1 in .env
+  curl 'localhost:4300/api/v1/drift' -H "authorization: Bearer $DRIFTWATCH_API_KEY"   # with DRIFT_DRY_RUN=1 in .env
   ```
 </Callout>
 
@@ -166,7 +189,8 @@ cp packages/server/.env.example packages/server/.env   # then edit it
 pnpm dev                                                # server + console, hot reload
 ```
 
-- `pnpm dev` runs the server (`:3000`) and the console dev server together.
+- `pnpm dev` runs the server (`:4300`) and the console dev server (`:5173`)
+  together; the console proxies API calls to the server.
 - `pnpm --filter @driftwatch/server test` runs the test suite.
 - `pnpm drift:dry-run` prints a fixture-backed drift report without a running
   server — handy in CI.

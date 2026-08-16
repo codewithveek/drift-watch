@@ -1,11 +1,12 @@
 /**
  * better-auth configuration — the console's human authentication.
  *
- * This replaces the old model where an operator pasted the flat `AUTH_TOKEN`
- * into the browser and it sat in `localStorage`. That was bad in three ways at
+ * This replaced the old model where an operator pasted a flat `AUTH_TOKEN` into
+ * the browser and it sat in `localStorage`. That was bad in several ways at
  * once: the credential was the deployment's most privileged secret, it never
  * expired, XSS could read it, and every console action landed in the audit log
- * attributed to `root` rather than to a person.
+ * attributed to `root` rather than to a person. That token has since been
+ * removed outright — see routes/auth.ts.
  *
  * ## Two authentication paths, one authorization model
  *
@@ -138,7 +139,7 @@ export function createAuth(options: CreateAuthOptions) {
     ],
 
     // The console is same-origin, so this list only matters for the Vite dev
-    // server on :5173 talking to the API on :3000.
+    // server on :5173 talking to the API on :4300.
     trustedOrigins: [baseUrl],
   });
 }

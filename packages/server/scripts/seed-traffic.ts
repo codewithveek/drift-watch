@@ -12,7 +12,7 @@
  */
 import 'dotenv/config';
 
-const agentBaseUrl = process.env.BASE_URL ?? 'http://localhost:3000';
+const agentBaseUrl = process.env.BASE_URL ?? 'http://localhost:4300';
 const authToken = process.env.AUTH_TOKEN ?? '';
 const requestCount = Number(process.argv[2] ?? 20);
 

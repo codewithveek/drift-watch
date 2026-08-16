@@ -1,9 +1,11 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import {
+  API_KEY_SCOPES,
   DriftWatchConfigSchema,
   MemoryStateStore,
   ApprovalService,
+  mintApiKey,
   type ApiKeyScope,
   type AutopilotScheduler,
 } from '@driftwatch/sdk';
@@ -15,15 +17,21 @@ import { ServerConfigSchema, type ServerConfig } from '../config/server-config.j
 
 let app: FastifyInstance | undefined;
 
-const ROOT = 'root-secret';
-
 /**
- * Every test here sets AUTH_TOKEN. Without it the gate's dev local-network
- * path grants full scopes to fastify.inject (which reports 127.0.0.1), and
- * nothing about scoping would actually be exercised.
+ * A stub login, present only so the gate's local-network path is CLOSED.
+ *
+ * `fastify.inject` reports 127.0.0.1, and with no login configured that would
+ * resolve to the `local` development principal holding every scope — so none of
+ * the scoping these tests exist to verify would actually be exercised. Handing
+ * the gate an `auth` models the realistic production shape (a deployment with a
+ * database and a login) where a bearer must be a real minted key.
  */
+const AUTH_WITH_NO_SESSIONS = {
+  api: { getSession: async () => null },
+} as unknown as Parameters<typeof createAuthGate>[0]['auth'];
+
 async function buildApp(overrides: Partial<ServerConfig> = {}) {
-  const config = ServerConfigSchema.parse({ authToken: ROOT, ...overrides });
+  const config = ServerConfigSchema.parse({ ...overrides });
   const store = new MemoryStateStore();
   const approvalService = new ApprovalService({
     store,
@@ -32,7 +40,7 @@ async function buildApp(overrides: Partial<ServerConfig> = {}) {
     timeoutDecision: 'rejected',
   });
   const fastify = Fastify({ logger: false });
-  const authorize = createAuthGate({ store, authToken: config.authToken });
+  const authorize = createAuthGate({ store, auth: AUTH_WITH_NO_SESSIONS });
   const recordAudit = createAuditRecorder(store);
 
   await registerApiKeyRoutes(fastify, { store, authorize, recordAudit });
@@ -52,23 +60,36 @@ async function buildApp(overrides: Partial<ServerConfig> = {}) {
     authorize,
     recordAudit,
   });
+  // The admin credential these tests act with, minted rather than configured:
+  // there is no flat all-powerful token any more.
+  const adminKey = mintApiKey({ name: 'admin', scopes: [...API_KEY_SCOPES], createdBy: 'test' });
+  await store.createApiKey(adminKey.record);
+
   await fastify.ready();
   app = fastify;
-  return { fastify, store };
+  adminToken = adminKey.token;
+  return { fastify, store, adminToken };
 }
 
-const asRoot = (token = ROOT) => ({ authorization: `Bearer ${token}` });
+/**
+ * The admin credential the tests act with. Module-level so the many `asRoot()`
+ * call sites stay argument-free; set by `buildApp`, which mints a fresh one per
+ * test against that test's own store.
+ */
+let adminToken = '';
+
+const asRoot = (token: string = adminToken) => ({ authorization: `Bearer ${token}` });
 
 /** Mints a key through the real HTTP route and returns its plaintext token. */
 async function mintKey(
   fastify: FastifyInstance,
   body: { name?: string; scopes: ApiKeyScope[]; agentIds?: string[]; expiresAt?: number },
-  actorToken = ROOT,
+  actorToken?: string,
 ): Promise<{ token: string; id: string; statusCode: number; json: () => any }> {
   const response = await fastify.inject({
     method: 'POST',
     url: '/api-keys',
-    headers: asRoot(actorToken),
+    headers: asRoot(actorToken ?? adminToken),
     payload: { name: 'test key', ...body },
   });
   const parsed = response.statusCode === 201 ? response.json() : { token: '', key: { id: '' } };
@@ -275,8 +296,10 @@ describe('audit trail', () => {
       'apikey.revoke',
       'apikey.create',
     ]);
-    expect(events[0].actor).toBe('root');
-    expect(events[0].actorLabel).toBe('AUTH_TOKEN');
+    // Attributed to the minted admin key, not to a flat all-powerful token —
+    // real attribution is the whole reason AUTH_TOKEN was removed.
+    expect(events[0].actorLabel).toBe('admin');
+    expect(events[0].actor).not.toBe('root');
     expect(JSON.stringify(events)).not.toContain(key.token);
   });
 

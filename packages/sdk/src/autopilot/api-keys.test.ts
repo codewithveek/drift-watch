@@ -143,7 +143,7 @@ describe('MemoryStateStore audit log', () => {
     id: `event-${Math.random()}`,
     at: 1,
     actor: 'root',
-    actorLabel: 'AUTH_TOKEN',
+    actorLabel: 'admin@example.test',
     action: 'agent.update' as const,
     summary: 'updated guardrails',
     ...overrides,

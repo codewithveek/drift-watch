@@ -19,5 +19,5 @@ export const auth = createAuth({
   db: drizzle({} as never),
   // Length-valid placeholder; generation never signs anything.
   secret: 'schema-generation-placeholder-secret',
-  baseUrl: 'http://localhost:3000',
+  baseUrl: 'http://localhost:4300',
 });

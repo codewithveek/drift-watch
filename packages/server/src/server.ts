@@ -66,7 +66,6 @@ if (auth) await registerAuthRoutes(fastifyServer, { auth });
 // enforcement and attribution can't diverge between them.
 const authorize = createAuthGate({
   store: autopilot.store,
-  authToken: serverConfig.authToken,
   ...(auth ? { auth } : {}),
 });
 const recordAudit = createAuditRecorder(autopilot.store);

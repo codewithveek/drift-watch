@@ -106,19 +106,22 @@ way to see the SDK's output without writing any code:
 
 ```bash
 git clone https://github.com/codewithveek/drift-watch.git && cd drift-watch
-cp packages/server/.env.example packages/server/.env    # set QWEN_API_KEY + AUTH_TOKEN
-docker build -f packages/server/Dockerfile -t driftwatch .
-docker run --rm -p 3000:3000 --env-file packages/server/.env driftwatch
+cp packages/server/.env.example packages/server/.env    # set QWEN_API_KEY, DW_USER, DW_PASSWORD
+docker compose --env-file packages/server/.env up -d --build
 ```
+
+Two containers — DriftWatch and Postgres. The server migrates its own schema and
+seeds the admin account at boot. Open `http://localhost:4300`, sign in, and mint
+an API key from **API keys → New key**:
 
 ```bash
 # send the agent a task
-curl -XPOST localhost:3000/run \
-  -H "authorization: Bearer $AUTH_TOKEN" -H 'content-type: application/json' \
+curl -XPOST localhost:4300/api/v1/run \
+  -H "authorization: Bearer $DRIFTWATCH_API_KEY" -H 'content-type: application/json' \
   -d '{"prompt":"weather in Lagos, then search docs for onboarding"}'
 
 # get a drift report (fixtures work with DRIFT_DRY_RUN=1, no Prometheus needed)
-curl localhost:3000/drift -H "authorization: Bearer $AUTH_TOKEN"
+curl localhost:4300/api/v1/drift -H "authorization: Bearer $DRIFTWATCH_API_KEY"
 ```
 
 Full walkthrough: [Quickstart](https://drift-watch-docs.vercel.app/docs/quickstart).

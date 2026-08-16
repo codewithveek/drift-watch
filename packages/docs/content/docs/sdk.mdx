@@ -16,6 +16,71 @@ The reference [server](/docs/server) and [console](/docs/console) are built on
 this SDK. Use them to try DriftWatch without writing code, or as a blueprint for
 your own service.
 
+## The short version
+
+Most agents need one object:
+
+```ts
+import { DriftWatchAgent } from '@driftwatch/sdk';
+import { tool } from 'ai';
+import { z } from 'zod';
+
+const payments = new DriftWatchAgent({
+  id: 'payments',
+  // Omit both to run entirely locally — no DriftWatch deployment needed.
+  url: process.env.DRIFTWATCH_URL,
+  apiKey: process.env.DRIFTWATCH_API_KEY,
+
+  guardrails: { maxSteps: 8, maxCostUsd: 0.5 },
+
+  policies: [
+    {
+      tool: 'issue_refund',
+      field: 'amountUsd',
+      condition: { gt: 100 },
+      action: 'require_approval',
+      reason: 'Large refunds need a human',
+    },
+  ],
+
+  tools: {
+    issue_refund: tool({
+      description: 'Issue a refund for an order',
+      inputSchema: z.object({ orderId: z.string(), amountUsd: z.number() }),
+      execute: async ({ orderId, amountUsd }) => issueRefund(orderId, amountUsd),
+    }),
+  },
+});
+
+const result = await payments.run({ prompt: 'Refund order 123', model });
+```
+
+Every tool is wrapped with this agent's telemetry span and policy gate. Because
+tools are declared *inside* the agent, the object key **is** the tool name — a
+policy can't drift away from the tool it gates, and `policies` autocompletes
+from the tools you declared. A misspelled tool name is a compile error, and
+`{ gt: … }` is only offered on numeric fields (the runtime coerces those
+operands with `Number()`, so `gt` on a string could never fire).
+
+### Three ways to run it
+
+| Topology | What you get |
+| --- | --- |
+| SDK alone (no `url`/`apiKey`) | Local guardrails, `deny` policies, OTel export. Zero DriftWatch infrastructure. |
+| SDK + a deployment | Registration sync, console overrides, human approvals, fleet view, charts. |
+| Deployment alone | Agents in any language register and are governed over REST. |
+
+With a `url` and `apiKey` the agent pushes what its code declares and receives
+back the configuration actually in force, including anything an operator changed
+in the console — see [layered configuration](/docs/console). If the control plane
+is unreachable the agent **keeps running** on its own declared config and logs a
+warning: DriftWatch must never be the reason your agent stops working. Approvals
+are the deliberate exception and fail **closed**.
+
+Everything below is the layer underneath. It stays fully public and supported —
+the reference server uses it directly — and you need it only when you want
+something `DriftWatchAgent` doesn't cover.
+
 ## Get started
 
 ### 1. Install

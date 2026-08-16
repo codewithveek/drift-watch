@@ -17,7 +17,7 @@
 #      default (reachable only inside the stack) unless you assign a Domain.
 #      No service here publishes a host port on purpose (Coolify's own docs
 #      warn that bypasses its proxy). Assign a Domain to `driftwatch` only
-#      (e.g. https://driftwatch.yourdomain.com:3000) — redis, otel-collector,
+#      (e.g. https://driftwatch.yourdomain.com:4300) — redis, otel-collector,
 #      and prometheus stay internal; driftwatch reaches them by service name
 #      on the stack's own network, no domain needed for those. Assign
 #      Prometheus a domain too only if you want to browse its own UI directly.
@@ -53,7 +53,7 @@ services:
       context: .
       dockerfile: packages/server/Dockerfile
     expose:
-      - "3000"
+      - "4300"
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       # This agent's identity — the fleet model's PrometheusMetricsSource
@@ -68,7 +68,6 @@ services:
       QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
       QWEN_API_KEY: ${QWEN_API_KEY:-}
       MODEL: ${MODEL:-qwen3.6-plus}
-      AUTH_TOKEN: ${AUTH_TOKEN:-}
       # --- shared state (multi-process): point autopilot at the Redis above ---
       REDIS_URL: redis://redis:6379
       # --- autopilot (drift-triggered remediation loop) ---
@@ -84,7 +83,7 @@ services:
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       TELEGRAM_SECRET_TOKEN: ${TELEGRAM_SECRET_TOKEN:-}
       DRIFT_WEBHOOK_URL: ${DRIFT_WEBHOOK_URL:-}
-      PORT: 3000
+      PORT: 4300
     depends_on:
       - redis
       - prometheus

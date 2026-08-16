@@ -65,18 +65,14 @@ describe.skipIf(!testDatabaseUrl)('built-in auth', () => {
     auth = createAuth({
       db: handle.db,
       secret: 'test-secret-that-is-long-enough-to-sign',
-      baseUrl: 'http://localhost:3000',
+      baseUrl: 'http://localhost:4300',
     });
 
     server = Fastify();
     await server.register(rateLimit, { global: false, max: 1000, timeWindow: 60_000 });
     await registerAuthRoutes(server, { auth });
 
-    const authorize = createAuthGate({
-      store: new MemoryStateStore(),
-      authToken: '',
-      auth,
-    });
+    const authorize = createAuthGate({ store: new MemoryStateStore(), auth });
     // A stand-in for any real control-plane route: it does nothing but run the
     // gate and expose which principal came out.
     server.get('/probe', async (request, reply) => {

@@ -64,7 +64,11 @@ deliberately.
 | `LOG_LEVEL` | `logLevel` | `info` | Fastify/pino log level. |
 | `BODY_LIMIT` | `bodyLimitBytes` | `131072` (128 KiB) | Hard cap on request body size. |
 | `TRUST_PROXY` | `trustProxy` | `false` (`'1'` → `true`) | Enable when the server sits behind a reverse proxy/load balancer — otherwise `request.ip` and the local-network auth fallback see the proxy's address, not the client's. |
-| `AUTH_TOKEN` | `authToken` | `''` | Root bearer token: full access to every route and every agent, and the credential you mint the first API key with. Empty = local-only mode. Scoped [API keys](/docs/security#api-keys) work either way. See [security.md](/docs/security#authentication). |
+| `DW_USER` | `adminUser` | `''` | Administrator account created on the **first** boot against an empty database, then ignored. Public sign-up is disabled, so without this there is no way into the console. |
+| `DW_PASSWORD` | `adminPassword` | `''` | That admin's initial password; at least 12 characters. Changed on first sign-in. |
+| `DW_AUTH_SECRET` | `authSecret` | `''` | Signs session cookies. Must be stable across restarts and identical across replicas. Required in production. |
+| `DW_BASE_URL` | `baseUrl` | `''` | The origin users actually reach this deployment at. Must match the browser's address bar, or the session cookie is scoped to the wrong host and login silently fails. |
+| `DATABASE_URL` | `databaseUrl` | `''` | Postgres connection URL. The durable backend, and a prerequisite for console login. Takes precedence over `REDIS_URL`. |
 | `MAX_PROMPT_BYTES` | `maxPromptBytes` | `8192` | Per-request prompt size cap, independent of `BODY_LIMIT`. |
 | `DRIFT_DRY_RUN` | `driftDryRun` | `false` (`'1'` → `true`) | `/drift` uses built-in fixtures instead of querying Prometheus. |
 | `RATE_LIMIT_MAX` | `rateLimitMax` | `30` | Max requests per client per window on `/run` and `/drift`. |

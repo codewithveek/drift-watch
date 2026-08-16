@@ -94,10 +94,9 @@ export function ApiKeysPage() {
       {/* Explanatory, not a result of an action — so a plain panel rather than
           Notice, which is the inline error/success affordance. */}
       <p className="rounded-lg border border-line bg-panel-2 px-3 py-2 text-xs text-ink-2">
-        <code className="font-mono text-2xs">AUTH_TOKEN</code> remains a full-access root
-        credential and is not listed here — it is how the first key gets minted. Once you have a
-        key with the scopes you need, prefer it over the root token, including in this console
-        (paste it into the token dialog in the sidebar).
+        Keys authenticate machines — the SDK, CI, scripts. You are signed in as a person and do
+        not need one to use this console. Give each key the narrowest scopes and the fewest agents
+        that will do: a key is only as safe as the smallest thing it can reach.
       </p>
 
       <Card className="overflow-hidden py-0">

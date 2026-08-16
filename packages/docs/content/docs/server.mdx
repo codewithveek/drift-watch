@@ -22,12 +22,12 @@ exposes and the two things you customize: the **model client** and your
 | `POST /run` | Execute an agent task. Body `{ "prompt": "…" }`. Returns the output plus a `usage` summary (task id, steps, skills used, token spend, provider, model). |
 | `GET /drift` | Run drift detection now and return the two window stats + the model's verdict. Uses the configured Prometheus-compatible metrics source, or fixtures when `DRIFT_DRY_RUN=1`. |
 
-Both require `Authorization: Bearer <AUTH_TOKEN>` (or, if `AUTH_TOKEN` is unset,
+Both require `Authorization: Bearer <api-key>` (or, if the deployment has no database and therefore no login,
 a caller on your private network — see [security.md](/docs/security#authentication)).
 
 ```bash
-curl -XPOST localhost:3000/run \
-  -H "authorization: Bearer $AUTH_TOKEN" \
+curl -XPOST localhost:4300/run \
+  -H "authorization: Bearer $DRIFTWATCH_API_KEY" \
   -H 'content-type: application/json' \
   -d '{"prompt":"weather in Lagos"}'
 ```
@@ -151,7 +151,9 @@ lists them all with comments.
 
 The essentials to set before exposing it:
 
-- `AUTH_TOKEN` — required for any non-local deployment.
+- `DW_USER` / `DW_PASSWORD` / `DW_AUTH_SECRET` — the admin account and session
+  secret. Required for any deployment you sign into.
+- `DATABASE_URL` — required for anything other than local experimentation.
 - `QWEN_API_KEY` (or your provider's key).
 - `OTEL_EXPORTER_OTLP_ENDPOINT` / `PROMETHEUS_URL` + keys — to send/read telemetry
   ([prometheus.md](/docs/prometheus)).

@@ -72,9 +72,7 @@ services:
       # The origin users actually reach this at. Must match the browser's
       # address bar, not the container's internal address, or the session
       # cookie is scoped to the wrong host and login silently fails.
-      DW_BASE_URL: ${DW_BASE_URL:-http://localhost:3000}
-      # Deprecated break-glass credential; leave unset once an admin exists.
-      AUTH_TOKEN: ${AUTH_TOKEN:-}
+      DW_BASE_URL: ${DW_BASE_URL:-http://localhost:4300}
       # --- durable state ------------------------------------------------------
       DATABASE_URL: postgres://${POSTGRES_USER:-driftwatch}:${POSTGRES_PASSWORD:-driftwatch}@postgres:5432/${POSTGRES_DB:-driftwatch}
       # Optional, and ignored when DATABASE_URL is set — Postgres implements
@@ -93,9 +91,9 @@ services:
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       TELEGRAM_SECRET_TOKEN: ${TELEGRAM_SECRET_TOKEN:-}
       DRIFT_WEBHOOK_URL: ${DRIFT_WEBHOOK_URL:-}
-      PORT: 3000
+      PORT: 4300
     ports:
-      - "3000:3000"
+      - "4300:4300"
     depends_on:
       postgres:
         condition: service_healthy

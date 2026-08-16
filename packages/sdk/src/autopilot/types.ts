@@ -293,9 +293,9 @@ export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 export interface AuditEvent {
   id: string;
   at: number;
-  /** Principal id: `root` (AUTH_TOKEN), `local` (dev local-network), or an API key id. */
+  /** Principal id: a user id, `local` (dev local-network), or an API key id. */
   actor: string;
-  /** Human label for that principal — the key's name, or `AUTH_TOKEN`. */
+  /** Human label for that principal — a user's email, or the key's name. */
   actorLabel: string;
   action: AuditAction;
   /** The record acted on: an agent id, an API key id, an approval id. */
