@@ -115,7 +115,9 @@ export async function registerRoutes(
     const agent = await getEffectiveAgent(store, agentId);
     if (!agent) throw new AgentNotFoundError(agentId);
 
-    const metricsQuerySource = createMetricsQuerySourceFor(driftWatchConfig.driftDetection, agent);
+    const metricsQuerySource = createMetricsQuerySourceFor(driftWatchConfig.driftDetection, agent, {
+      store,
+    });
     return detectBehavioralDrift({
       modelClient,
       isDryRun: serverConfig.driftDryRun,

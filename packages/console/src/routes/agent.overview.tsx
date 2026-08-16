@@ -1,7 +1,13 @@
 import { useState } from 'react';
 import { useParams, useRevalidator, useRouteLoaderData } from 'react-router';
-import { LineChart, Pause, Play, Radar, RotateCcw } from 'lucide-react';
-import { client, type DriftHistoryEntry, type ToolMetadata } from '@/api';
+import { Activity, Database, LineChart, Pause, Play, Radar, RotateCcw } from 'lucide-react';
+import {
+  client,
+  type AgentMetricsResponse,
+  type DriftHistoryEntry,
+  type ToolMetadata,
+} from '@/api';
+import { RunActivityChart } from '@/components/run-activity-chart';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DriftVerdictChart } from '@/components/activity-chart';
@@ -10,6 +16,8 @@ import { EmptyState, Notice, SeverityBadge, Stat, timeAgo } from '@/components/d
 import type { AgentLoaderData } from './agent';
 
 export interface OverviewLoaderData {
+  /** Run activity over the last 24h, from this deployment's own records. */
+  metrics: AgentMetricsResponse;
   history: DriftHistoryEntry[];
   allTools: ToolMetadata[];
 }
@@ -19,13 +27,15 @@ export async function overviewLoader({
 }: {
   params: { agentId?: string };
 }): Promise<OverviewLoaderData> {
-  const [{ history }, { tools }] = await Promise.all([
+  const [{ history }, { tools }, metrics] = await Promise.all([
     client.getDriftHistory(params.agentId!),
     // Tool metadata is what turns the access card from a list of names into a
-    // list of consequences (destructive, sensitive fields).
-    client.getTools(),
+    // list of consequences (destructive, sensitive fields). Per-agent, since an
+    // SDK-registered agent declares tools this server has never seen.
+    client.getAgentTools(params.agentId!),
+    client.getAgentMetrics(params.agentId!),
   ]);
-  return { history, allTools: tools };
+  return { history, allTools: tools, metrics };
 }
 
 /** Verdicts shown in the feed. The chart above already covers the long tail. */
@@ -34,7 +44,9 @@ const FEED_LIMIT = 20;
 export function AgentOverviewPage() {
   const { agentId } = useParams();
   const { state } = useRouteLoaderData('agent') as AgentLoaderData;
-  const { history, allTools } = useRouteLoaderData('agent-overview') as OverviewLoaderData;
+  const { history, allTools, metrics } = useRouteLoaderData(
+    'agent-overview',
+  ) as OverviewLoaderData;
   const revalidator = useRevalidator();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +71,25 @@ export function AgentOverviewPage() {
   return (
     <div className="space-y-4">
       {error && <Notice tone="error">{error}</Notice>}
+
+      <RunActivityChart
+        buckets={metrics.buckets}
+        available={metrics.available}
+        windowHours={metrics.windowHours}
+        empty={
+          <EmptyState icon={<Activity className="size-5" />} title="No runs in this window">
+            Runs are recorded when an agent reports one through the SDK. Nothing has run in the
+            last {metrics.windowHours} hours.
+          </EmptyState>
+        }
+        unavailable={
+          <EmptyState icon={<Database className="size-5" />} title="Run history needs a database">
+            This deployment uses an in-memory or Redis store, which keeps no run history. Set
+            <code className="mx-1 font-mono text-2xs">DATABASE_URL</code>
+            to record runs and see activity here.
+          </EmptyState>
+        }
+      />
 
       <Card className="gap-4">
         <CardHeader>

@@ -25,6 +25,7 @@ import type {
 } from '@driftwatch/sdk';
 import { sql } from 'drizzle-orm';
 import { createDatabase, type DatabaseHandle } from '../db/client.js';
+import { createTestDatabase } from '../test-support.js';
 import { runMigrations } from '../db/migrate.js';
 import { seedOrganization } from '../db/seed.js';
 import { PostgresStateStore } from '../db/postgres-store.js';
@@ -492,7 +493,12 @@ describe.skipIf(!testDatabaseUrl)('postgres', () => {
   let store: PostgresStateStore;
 
   beforeEach(async () => {
-    handle ??= createDatabase({ connectionString: testDatabaseUrl!, maxConnections: 4 });
+    handle ??= createDatabase({
+      // Its own database: parallel test FILES truncating shared tables would
+      // otherwise delete rows another file just wrote. See test-support.ts.
+      connectionString: await createTestDatabase(testDatabaseUrl!, 'store'),
+      maxConnections: 4,
+    });
     await runMigrations({ db: handle.db });
     await seedOrganization(handle.db);
     // Truncate rather than recreate: migrating per test would dominate runtime,

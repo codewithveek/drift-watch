@@ -55,6 +55,28 @@ export type {
   ToolCallPolicyRule,
 };
 
+/** One time bucket from GET /agents/:agentId/metrics. */
+export interface RunBucket {
+  at: number;
+  runs: number;
+  failed: number;
+  totalTokens: number;
+  costUsd: number;
+  medianDurationMs: number;
+}
+
+/**
+ * GET /agents/:agentId/metrics. `available` is false when the deployment's
+ * backend cannot store run history (memory/Redis) — the console explains that
+ * rather than drawing a flat line at zero, which would read as "nothing ran".
+ */
+export interface AgentMetricsResponse {
+  available: boolean;
+  windowHours: number;
+  bucketMs: number;
+  buckets: RunBucket[];
+}
+
 /** GET /agents/:agentId */
 export interface AgentDetailResponse {
   /** The code-declared baseline. */
@@ -237,6 +259,8 @@ export const client = {
   getState: (agentId: string) => api<StateResponse>(`/agents/${agentId}/state`),
   getDriftHistory: (agentId: string) =>
     api<{ history: DriftHistoryEntry[] }>(`/agents/${agentId}/drift/history`),
+  getAgentMetrics: (agentId: string, hours = 24) =>
+    api<AgentMetricsResponse>(`/agents/${agentId}/metrics?hours=${hours}`),
   getActionLog: (agentId: string) =>
     api<{ log: ActionLogEntry[] }>(`/agents/${agentId}/actions/log`),
 

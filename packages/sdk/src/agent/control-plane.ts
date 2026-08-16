@@ -47,6 +47,24 @@ export interface EffectiveAgentConfig {
   pollIntervalSeconds: number;
 }
 
+/** One completed run, as reported for the console's charts and drift windows. */
+export interface RunReport {
+  id: string;
+  startedAt: number;
+  endedAt: number;
+  status: 'completed' | 'failed' | 'stopped';
+  stopReason?: string;
+  errorMessage?: string;
+  model?: string;
+  steps?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  costUsd?: number;
+  traceId?: string;
+  toolCalls?: { tool: string; at: number; durationMs: number; ok: boolean; gated?: boolean }[];
+}
+
 /** The declaration a client pushes. Absent fields are cleared, not preserved. */
 export interface AgentDeclaration {
   name?: string;
@@ -114,6 +132,24 @@ export class ControlPlaneClient implements ToolCallApprovalTransport {
       `/agents/${encodeURIComponent(agentId)}/sync`,
       declaration,
     );
+  }
+
+  /**
+   * Reports a finished run. Best-effort by contract: telemetry must never be
+   * able to fail somebody's agent, so the caller is expected to ignore the
+   * result and this resolves rather than rejecting on a transport error.
+   */
+  async reportRun(agentId: string, run: RunReport): Promise<void> {
+    try {
+      await this.request<{ stored: boolean }>(
+        'POST',
+        `/agents/${encodeURIComponent(agentId)}/runs`,
+        run,
+      );
+    } catch {
+      // Deliberately swallowed — see the docblock. The run already happened;
+      // failing to describe it afterwards changes nothing for the caller.
+    }
   }
 
   // --- ToolCallApprovalTransport -------------------------------------------

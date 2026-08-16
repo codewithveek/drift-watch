@@ -42,6 +42,7 @@ import {
 import type { SyncedToolMetadata } from '@driftwatch/sdk';
 import type { ServerConfig } from '../config/server-config.js';
 import { saveAgentTools } from '../state/agent-tools.js';
+import { recordRun, supportsRunHistory, type RunReport } from '../state/runs.js';
 import type { AuthorizeFn } from './auth.js';
 import type { AuditRecorder } from './audit.js';
 
@@ -209,6 +210,52 @@ export async function registerSdkRoutes(
       };
       await store.createToolCallApproval(approval);
       return reply.code(201).send({ toolCall: approval });
+    },
+  );
+
+  /**
+   * Reports a finished run and the tool calls it made.
+   *
+   * `agent:run` scope: this is telemetry about executing the agent, not a
+   * configuration change. Fire-and-forget from the client's perspective — a
+   * failure here must never surface as a failed agent run, which is why the SDK
+   * swallows it and why this returns 202 rather than making the caller care.
+   */
+  fastifyServer.post<{ Params: { agentId: string }; Body: Partial<RunReport> }>(
+    '/agents/:agentId/runs',
+    async (request, reply) => {
+      const { agentId } = request.params;
+      if (!(await authorize(request, reply, { scope: 'agent:run', agentId }))) return;
+
+      const body = request.body ?? {};
+      if (!body.id || typeof body.startedAt !== 'number' || typeof body.endedAt !== 'number') {
+        return reply.code(400).send({ error: 'id, startedAt and endedAt are required' });
+      }
+      if (!supportsRunHistory(store)) {
+        // Accepted and discarded: a Redis or memory deployment has nowhere to
+        // put this. Returning an error would make every SDK client log a
+        // failure for something the deployment simply does not support.
+        return reply.code(202).send({ stored: false });
+      }
+
+      await recordRun(store, {
+        id: body.id,
+        agentId,
+        startedAt: body.startedAt,
+        endedAt: body.endedAt,
+        status: body.status ?? 'completed',
+        ...(body.stopReason !== undefined ? { stopReason: body.stopReason } : {}),
+        ...(body.errorMessage !== undefined ? { errorMessage: body.errorMessage } : {}),
+        ...(body.model !== undefined ? { model: body.model } : {}),
+        ...(body.steps !== undefined ? { steps: body.steps } : {}),
+        ...(body.promptTokens !== undefined ? { promptTokens: body.promptTokens } : {}),
+        ...(body.completionTokens !== undefined ? { completionTokens: body.completionTokens } : {}),
+        ...(body.totalTokens !== undefined ? { totalTokens: body.totalTokens } : {}),
+        ...(body.costUsd !== undefined ? { costUsd: body.costUsd } : {}),
+        ...(body.traceId !== undefined ? { traceId: body.traceId } : {}),
+        ...(body.toolCalls !== undefined ? { toolCalls: body.toolCalls } : {}),
+      });
+      return reply.code(202).send({ stored: true });
     },
   );
 

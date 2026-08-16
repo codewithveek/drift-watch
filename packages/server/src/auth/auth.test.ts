@@ -16,6 +16,7 @@ import rateLimit from '@fastify/rate-limit';
 import { sql } from 'drizzle-orm';
 import { MemoryStateStore } from '@driftwatch/sdk';
 import { createDatabase, type DatabaseHandle } from '../db/client.js';
+import { createTestDatabase } from '../test-support.js';
 import { runMigrations } from '../db/migrate.js';
 import { seedOrganization } from '../db/seed.js';
 import { createAuth, type Auth } from './auth.js';
@@ -53,7 +54,10 @@ describe.skipIf(!testDatabaseUrl)('built-in auth', () => {
   let lastPrincipal: Principal | undefined;
 
   beforeAll(async () => {
-    handle = createDatabase({ connectionString: testDatabaseUrl!, maxConnections: 4 });
+    handle = createDatabase({
+      connectionString: await createTestDatabase(testDatabaseUrl!, 'auth'),
+      maxConnections: 4,
+    });
     await runMigrations({ db: handle.db });
     await seedOrganization(handle.db);
     await handle.db.execute(sql`truncate table "user", session, account, verification cascade`);

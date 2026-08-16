@@ -102,7 +102,7 @@ export async function createAutopilot(options: {
     modelClient,
     policyConfig: loadPolicyConfig(serverConfig),
     metricsQuerySourceFor: (agent) =>
-      createMetricsQuerySourceFor(driftWatchConfig.driftDetection, agent),
+      createMetricsQuerySourceFor(driftWatchConfig.driftDetection, agent, { store }),
     isDryRun: serverConfig.driftDryRun,
     scanIntervalMs: serverConfig.scanIntervalMs,
     cooldownMs: serverConfig.cooldownMs,

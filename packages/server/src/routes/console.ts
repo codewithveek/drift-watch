@@ -44,6 +44,14 @@ import { describeChangedFields, touchesPolicy, type AuditRecorder } from './audi
 import { allToolMetadata, allToolNames } from '../tools.js';
 import { listEffectiveAgents } from '../state/effective-agent.js';
 import { listAgentTools } from '../state/agent-tools.js';
+import { queryRunBuckets, supportsRunHistory } from '../state/runs.js';
+
+/** Bounds the chart range so a hand-edited query string cannot scan the table. */
+function clampHours(raw: string | undefined): number {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 24;
+  return Math.min(24 * 30, Math.max(1, Math.round(parsed)));
+}
 
 const HISTORY_LIMIT = 100;
 const AUDIT_LIMIT = 200;
@@ -495,6 +503,39 @@ export async function registerConsoleRoutes(
         tools: allowed
           ? allToolMetadata.filter((tool) => allowed.includes(tool.name))
           : allToolMetadata,
+      };
+    },
+  );
+
+  /**
+   * Run activity over time, for the console's charts.
+   *
+   * Served from this deployment's own records rather than proxied to Prometheus,
+   * which is what lets a two-container install show charts at all. Deployments
+   * without run history get an empty series and an explicit `available: false`
+   * — the console then explains why rather than drawing a flat line at zero,
+   * which would read as "your agents did nothing".
+   */
+  fastifyServer.get<{ Params: { agentId: string }; Querystring: { hours?: string } }>(
+    '/agents/:agentId/metrics',
+    async (request, reply) => {
+      if (!(await authorize(request, reply, { scope: 'read', agentId: request.params.agentId })))
+        return;
+      const agent = await requireAgent(store, request.params.agentId, reply);
+      if (!agent) return;
+
+      const hours = clampHours(request.query.hours);
+      const endTimeMs = Date.now();
+      const startTimeMs = endTimeMs - hours * 3_600_000;
+      // Roughly 48 points whatever the range: enough shape to read a trend,
+      // few enough that the chart stays legible and the payload stays small.
+      const bucketMs = Math.max(60_000, Math.round(((hours * 3_600_000) / 48 / 60_000)) * 60_000);
+
+      return {
+        available: supportsRunHistory(store),
+        windowHours: hours,
+        bucketMs,
+        buckets: await queryRunBuckets(store, agent.id, startTimeMs, endTimeMs, bucketMs),
       };
     },
   );
